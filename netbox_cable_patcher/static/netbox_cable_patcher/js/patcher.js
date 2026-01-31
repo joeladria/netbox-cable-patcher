@@ -7,7 +7,10 @@ class CablePatcher {
         this.container = options.container;
         this.svg = options.svg;
         this.csrfToken = options.csrfToken;
-        this.apiBase = '/api/';
+        // Use a relative plugin API path so requests are made to the plugin's
+        // endpoints (e.g. '<plugin-url>/api/locations'). A leading slash would
+        // target the global NetBox API instead.
+        this.apiBase = 'api/';
 
         // State
         this.locations = [];
@@ -105,12 +108,15 @@ class CablePatcher {
     // ========== API Methods ==========
 
     async apiGet(endpoint) {
-        const response = await fetch(this.apiBase + endpoint, {
+        const url = this.apiBase + endpoint;
+        console.log('API GET:', url);
+        const response = await fetch(url, {
             credentials: 'same-origin',
             headers: {
                 'Accept': 'application/json',
             }
         });
+        console.log('API Response:', response.status, response.statusText);
         if (!response.ok) throw new Error(`API error: ${response.status}`);
         return response.json();
     }
@@ -150,37 +156,21 @@ class CablePatcher {
 
     async loadLocations() {
         try {
-            // Load sites from NetBox API
-            const sitesResponse = await this.apiGet('dcim/sites/?limit=0');
-            const sites = sitesResponse.results || [];
+            // Use plugin endpoint which returns hierarchical site/location/rack data
+            // in a single response via `netbox_cable_patcher.api.LocationsViewSet`.
+            const resp = await this.apiGet('locations/');
+            // Accept multiple response shapes: either a raw array, or an object
+            // with a `results` field (defensive for misrouted NetBox API calls).
+            if (Array.isArray(resp)) {
+                this.locations = resp;
+            } else if (resp && Array.isArray(resp.results)) {
+                this.locations = resp.results;
+            } else {
+                console.warn('Unexpected locations response shape', resp);
+                this.locations = [];
+            }
 
-            // Load locations
-            const locationsResponse = await this.apiGet('dcim/locations/?limit=0');
-            const locations = locationsResponse.results || [];
-
-            // Load racks
-            const racksResponse = await this.apiGet('dcim/racks/?limit=0');
-            const racks = racksResponse.results || [];
-
-            // Build hierarchical structure
-            this.locations = sites.map(site => ({
-                id: site.id,
-                name: site.name,
-                slug: site.slug,
-                locations: locations
-                    .filter(loc => loc.site?.id === site.id)
-                    .map(loc => ({
-                        id: loc.id,
-                        name: loc.name,
-                        slug: loc.slug,
-                        racks: racks
-                            .filter(rack => rack.location?.id === loc.id)
-                            .map(rack => ({ id: rack.id, name: rack.name }))
-                    })),
-                racks: racks
-                    .filter(rack => rack.site?.id === site.id && !rack.location)
-                    .map(rack => ({ id: rack.id, name: rack.name }))
-            }));
+            console.debug('Loaded locations:', this.locations.length);
 
             this.populateSiteSelect();
         } catch (error) {
@@ -191,12 +181,24 @@ class CablePatcher {
 
     populateSiteSelect() {
         const select = document.getElementById('site-select');
+        if (!select) {
+            console.error('site-select element not found');
+            return;
+        }
+
+        console.debug('populateSiteSelect: locations=', this.locations);
+
         select.innerHTML = '<option value="">Select Site...</option>';
 
         this.locations.forEach(site => {
+            // Defensive mapping for different response shapes
+            const id = site.id || site.pk || (site.site && site.site.id);
+            const name = site.name || site.display_name || (site.site && site.site.name) || (site.title || null) || JSON.stringify(site);
+            if (!id) return;
+
             const option = document.createElement('option');
-            option.value = site.id;
-            option.textContent = site.name;
+            option.value = id;
+            option.textContent = name;
             select.appendChild(option);
         });
     }
@@ -205,112 +207,32 @@ class CablePatcher {
         this.showLoading(true);
 
         try {
-            // Build query for devices
-            const queryParams = new URLSearchParams({ limit: 0 });
-            if (params.rack) queryParams.set('rack_id', params.rack);
-            else if (params.location) queryParams.set('location_id', params.location);
-            else if (params.site) queryParams.set('site_id', params.site);
+            // Query the plugin devices endpoint which returns devices with ports
+            // already serialized by `DeviceWithPortsSerializer`.
+            const qp = new URLSearchParams();
+            if (params.rack) qp.set('rack', params.rack);
+            else if (params.location) qp.set('location', params.location);
+            else if (params.site) qp.set('site', params.site);
 
-            const devicesResponse = await this.apiGet('dcim/devices/?' + queryParams.toString());
-            const devices = devicesResponse.results || [];
+            const devicesResponse = await this.apiGet('devices/?' + qp.toString());
+            // The plugin returns an array of device objects matching the serializer
+            this.devices = devicesResponse || [];
 
-            // Load ports for each device based on mode
-            this.devices = await Promise.all(devices.map(async (device) => {
-                const deviceData = {
-                    id: device.id,
-                    name: device.name,
-                    device_type: device.device_type,
-                    rack: device.rack,
-                    position: device.position,
-                    interfaces: [],
-                    power_ports: [],
-                    power_outlets: [],
-                    front_ports: [],
-                    rear_ports: [],
-                };
+            // Load cables from plugin endpoint. Prefer server-side filtering by
+            // the same params to avoid fetching the entire NetBox cable list.
+            let cablesQuery = '';
+            if (params.rack) cablesQuery = 'cables/?rack=' + params.rack;
+            else if (params.location) cablesQuery = 'cables/?location=' + params.location;
+            else if (params.site) cablesQuery = 'cables/?site=' + params.site;
+            else if (this.devices.length > 0) {
+                // Request cables by device IDs
+                const parts = this.devices.map(d => 'device_ids[]=' + d.id).join('&');
+                cablesQuery = 'cables/?' + parts;
+            }
 
-                // Load interfaces
-                const intfResponse = await this.apiGet(`dcim/interfaces/?device_id=${device.id}&limit=0`);
-                deviceData.interfaces = (intfResponse.results || []).map(intf => ({
-                    id: intf.id,
-                    name: intf.name,
-                    type: intf.type?.label || intf.type,
-                    cable_id: intf.cable?.id || null,
-                    port_type: 'Interface',
-                    connected_endpoints: intf.connected_endpoints
-                }));
-
-                // Load power ports
-                const ppResponse = await this.apiGet(`dcim/power-ports/?device_id=${device.id}&limit=0`);
-                deviceData.power_ports = (ppResponse.results || []).map(p => ({
-                    id: p.id,
-                    name: p.name,
-                    type: p.type?.label || p.type,
-                    cable_id: p.cable?.id || null,
-                    port_type: 'PowerPort'
-                }));
-
-                // Load power outlets
-                const poResponse = await this.apiGet(`dcim/power-outlets/?device_id=${device.id}&limit=0`);
-                deviceData.power_outlets = (poResponse.results || []).map(p => ({
-                    id: p.id,
-                    name: p.name,
-                    type: p.type?.label || p.type,
-                    cable_id: p.cable?.id || null,
-                    port_type: 'PowerOutlet'
-                }));
-
-                // Load front ports
-                const fpResponse = await this.apiGet(`dcim/front-ports/?device_id=${device.id}&limit=0`);
-                deviceData.front_ports = (fpResponse.results || []).map(p => ({
-                    id: p.id,
-                    name: p.name,
-                    type: p.type?.label || p.type,
-                    cable_id: p.cable?.id || null,
-                    port_type: 'FrontPort'
-                }));
-
-                // Load rear ports
-                const rpResponse = await this.apiGet(`dcim/rear-ports/?device_id=${device.id}&limit=0`);
-                deviceData.rear_ports = (rpResponse.results || []).map(p => ({
-                    id: p.id,
-                    name: p.name,
-                    type: p.type?.label || p.type,
-                    cable_id: p.cable?.id || null,
-                    port_type: 'RearPort'
-                }));
-
-                return deviceData;
-            }));
-
-            // Load cables for these devices
-            if (this.devices.length > 0) {
-                const deviceIds = this.devices.map(d => d.id).join(',');
-                // Get cables - we'll filter client-side since NetBox cable API doesn't filter by device directly
-                const cablesResponse = await this.apiGet('dcim/cables/?limit=0');
-                this.cables = (cablesResponse.results || []).map(cable => ({
-                    id: cable.id,
-                    type: cable.type,
-                    type_display: cable.type?.label || cable.type,
-                    status: cable.status?.value || cable.status,
-                    status_display: cable.status?.label || cable.status,
-                    color: cable.color,
-                    label: cable.label,
-                    a_terminations: cable.a_terminations?.map(t => ({
-                        id: t.object_id,
-                        name: t.object?.name || '',
-                        type: t.object_type?.split('.').pop() || '',
-                        device_id: t.object?.device?.id,
-                        device_name: t.object?.device?.name || ''
-                    })) || [],
-                    b_terminations: cable.b_terminations?.map(t => ({
-                        id: t.object_id,
-                        name: t.object?.name || '',
-                        type: t.object_type?.split('.').pop() || '',
-                        device_id: t.object?.device?.id,
-                        device_name: t.object?.device?.name || ''
-                    })) || []
-                }));
+            if (cablesQuery) {
+                const cablesResponse = await this.apiGet(cablesQuery);
+                this.cables = cablesResponse || [];
             } else {
                 this.cables = [];
             }
@@ -895,16 +817,12 @@ class CablePatcher {
         const color = document.getElementById('cable-color-input').value.replace('#', '');
         const label = document.getElementById('cable-label-input').value;
 
-        // Build NetBox cable API payload
+        // Build plugin cable API payload (server will map to NetBox models)
         const cableData = {
-            a_terminations: [{
-                object_type: this.getContentType(this._pendingCableData.a_termination_type),
-                object_id: this._pendingCableData.a_termination_id
-            }],
-            b_terminations: [{
-                object_type: this.getContentType(this._pendingCableData.b_termination_type),
-                object_id: this._pendingCableData.b_termination_id
-            }],
+            a_termination_type: this._pendingCableData.a_termination_type,
+            a_termination_id: this._pendingCableData.a_termination_id,
+            b_termination_type: this._pendingCableData.b_termination_type,
+            b_termination_id: this._pendingCableData.b_termination_id,
             status: 'connected'
         };
 
@@ -913,7 +831,7 @@ class CablePatcher {
         if (label) cableData.label = label;
 
         try {
-            const cable = await this.apiPost('dcim/cables/', cableData);
+            const cable = await this.apiPost('cables/', cableData);
 
             // Close modal
             bootstrap.Modal.getInstance(document.getElementById('create-cable-modal')).hide();
@@ -938,7 +856,7 @@ class CablePatcher {
         if (!confirm('Are you sure you want to delete this cable?')) return;
 
         try {
-            await this.apiDelete(`dcim/cables/${this.selectedCable.id}/`);
+            await this.apiDelete(`cables/${this.selectedCable.id}/`);
 
             // Remove from local state
             this.cables = this.cables.filter(c => c.id !== this.selectedCable.id);
