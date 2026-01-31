@@ -1,0 +1,292 @@
+/* Cable Patcher Styles */
+
+/* Main container */
+#patcher-container {
+    position: relative;
+    min-height: 500px;
+    background: linear-gradient(135deg, #1a1d21 0%, #2d3239 100%);
+    overflow: hidden;
+}
+
+#patcher-scroll {
+    overflow: auto;
+    max-height: 70vh;
+    padding: 20px;
+}
+
+#patcher-svg {
+    display: block;
+    min-width: 100%;
+    min-height: 500px;
+}
+
+/* Empty and loading states */
+#empty-state,
+#loading-state {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 10;
+}
+
+#empty-state i,
+#loading-state i {
+    font-size: 4rem;
+}
+
+/* Device boxes */
+.device-box {
+    fill: #ffffff;
+    stroke: #dee2e6;
+    stroke-width: 2;
+    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));
+    transition: all 0.2s ease;
+}
+
+.device:hover .device-box {
+    stroke: #0d6efd;
+    filter: drop-shadow(0 4px 8px rgba(13,110,253,0.2));
+}
+
+.device.primary .device-box {
+    stroke: #0d6efd;
+    stroke-width: 3;
+}
+
+.device-header {
+    fill: #f8f9fa;
+}
+
+.device.primary .device-header {
+    fill: #e7f1ff;
+}
+
+.device-name {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    fill: #212529;
+    text-anchor: middle;
+    pointer-events: none;
+}
+
+/* Ports */
+.port {
+    stroke-width: 2;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.port:hover {
+    stroke-width: 3;
+    filter: drop-shadow(0 0 4px currentColor);
+}
+
+.port.connected {
+    cursor: pointer;
+}
+
+.port.connecting {
+    stroke-width: 3;
+    animation: port-pulse 1s ease-in-out infinite;
+}
+
+@keyframes port-pulse {
+    0%, 100% { filter: drop-shadow(0 0 2px currentColor); }
+    50% { filter: drop-shadow(0 0 8px currentColor); }
+}
+
+.port-label {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 11px;
+    fill: #495057;
+    pointer-events: none;
+}
+
+/* Cables */
+.cable {
+    fill: none;
+    stroke-width: 3;
+    stroke-linecap: round;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.cable:hover {
+    stroke-width: 5;
+    filter: url(#cable-glow);
+}
+
+.cable.selected {
+    stroke-width: 5;
+    filter: url(#cable-glow);
+    animation: cable-selected 1.5s ease-in-out infinite;
+}
+
+@keyframes cable-selected {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+.cable.planned {
+    stroke-dasharray: 10 5;
+}
+
+.cable.decommissioning {
+    stroke-dasharray: 5 5;
+    opacity: 0.5;
+}
+
+.cable.temp-cable {
+    stroke: #6c757d;
+    stroke-dasharray: 5 5;
+    opacity: 0.7;
+    pointer-events: none;
+}
+
+/* Connecting mode */
+#patcher-container.connecting-mode {
+    cursor: crosshair;
+}
+
+#patcher-container.connecting-mode .port:not(.connected):not(.connecting):hover {
+    stroke-width: 4;
+    filter: drop-shadow(0 0 8px #28a745);
+}
+
+/* Port tooltip */
+.port-tooltip {
+    position: fixed;
+    z-index: 1000;
+    background: #212529;
+    color: #fff;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 13px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    pointer-events: none;
+    max-width: 250px;
+}
+
+.port-tooltip::before {
+    content: '';
+    position: absolute;
+    left: -6px;
+    top: 50%;
+    transform: translateY(-50%);
+    border: 6px solid transparent;
+    border-right-color: #212529;
+}
+
+.port-tooltip-content strong {
+    display: block;
+    margin-bottom: 2px;
+}
+
+/* Cable info panel */
+#cable-info-panel {
+    animation: slideUp 0.2s ease-out;
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Mode buttons */
+.btn-group input[type="radio"].btn-check + label {
+    transition: all 0.15s ease;
+}
+
+.btn-group input[type="radio"].btn-check:checked + label {
+    box-shadow: 0 2px 8px rgba(13,110,253,0.3);
+}
+
+/* Form controls */
+.form-select:disabled {
+    background-color: #e9ecef;
+    opacity: 0.8;
+}
+
+/* Zoom controls */
+#zoom-in,
+#zoom-out,
+#zoom-reset {
+    min-width: 40px;
+}
+
+/* Modal improvements */
+#create-cable-modal .form-control-color {
+    width: 60px;
+    padding: 0.375rem;
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+    .device-box {
+        fill: #2d3239;
+        stroke: #495057;
+    }
+
+    .device-header {
+        fill: #343a40;
+    }
+
+    .device.primary .device-header {
+        fill: #1a3a5c;
+    }
+
+    .device-name {
+        fill: #f8f9fa;
+    }
+
+    .port-label {
+        fill: #adb5bd;
+    }
+}
+
+/* Responsive adjustments */
+@media (max-width: 1200px) {
+    #patcher-scroll {
+        max-height: 60vh;
+    }
+}
+
+@media (max-width: 768px) {
+    #patcher-container {
+        min-height: 400px;
+    }
+
+    #patcher-scroll {
+        max-height: 50vh;
+    }
+
+    .btn-group .btn {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.875rem;
+    }
+}
+
+/* Print styles */
+@media print {
+    #patcher-container {
+        background: white;
+    }
+
+    .cable {
+        stroke-width: 2;
+    }
+
+    #cable-info-panel,
+    .btn-group,
+    .form-select {
+        display: none;
+    }
+}

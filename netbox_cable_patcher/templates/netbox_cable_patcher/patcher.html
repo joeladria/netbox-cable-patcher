@@ -1,0 +1,277 @@
+{% extends 'base/layout.html' %}
+{% load static %}
+
+{% block title %}Cable Patcher{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="{% static 'netbox_cable_patcher/css/patcher.css' %}">
+{% endblock %}
+
+{% block tabs %}
+<ul class="nav nav-tabs">
+    <li class="nav-item">
+        <a class="nav-link active" href="#">Patch Bay View</a>
+    </li>
+</ul>
+{% endblock %}
+
+{% block content %}
+{% csrf_token %}
+<div class="container-fluid">
+    <!-- Header Controls -->
+    <div class="row mb-3">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body">
+                    <div class="row g-3 align-items-end">
+                        <!-- Location Selectors -->
+                        <div class="col-md-2">
+                            <label for="site-select" class="form-label">Site</label>
+                            <select id="site-select" class="form-select">
+                                <option value="">Select Site...</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label for="location-select" class="form-label">Location</label>
+                            <select id="location-select" class="form-select" disabled>
+                                <option value="">Select Location...</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label for="rack-select" class="form-label">Rack</label>
+                            <select id="rack-select" class="form-select" disabled>
+                                <option value="">Select Rack...</option>
+                            </select>
+                        </div>
+
+                        <!-- Primary Device Selector -->
+                        <div class="col-md-2">
+                            <label for="primary-device-select" class="form-label">Primary Device</label>
+                            <select id="primary-device-select" class="form-select" disabled>
+                                <option value="">Select Device...</option>
+                            </select>
+                        </div>
+
+                        <!-- Mode Tabs -->
+                        <div class="col-md-4">
+                            <label class="form-label">Mode</label>
+                            <div class="btn-group w-100" role="group">
+                                <input type="radio" class="btn-check" name="mode" id="mode-network" value="network" checked>
+                                <label class="btn btn-outline-primary" for="mode-network">
+                                    <i class="mdi mdi-ethernet"></i> Network
+                                </label>
+
+                                <input type="radio" class="btn-check" name="mode" id="mode-power" value="power">
+                                <label class="btn btn-outline-primary" for="mode-power">
+                                    <i class="mdi mdi-power-plug"></i> Power
+                                </label>
+
+                                <input type="radio" class="btn-check" name="mode" id="mode-patch" value="patch">
+                                <label class="btn btn-outline-primary" for="mode-patch">
+                                    <i class="mdi mdi-swap-horizontal"></i> Patch Panel
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Patcher Canvas -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">
+                        <i class="mdi mdi-cable-data"></i> Patch Bay View
+                    </h5>
+                    <div class="btn-group btn-group-sm">
+                        <button type="button" class="btn btn-outline-secondary" id="zoom-in" title="Zoom In">
+                            <i class="mdi mdi-magnify-plus"></i>
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary" id="zoom-reset" title="Reset Zoom">
+                            <i class="mdi mdi-magnify"></i> 100%
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary" id="zoom-out" title="Zoom Out">
+                            <i class="mdi mdi-magnify-minus"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <div id="patcher-container">
+                        <div id="patcher-scroll">
+                            <svg id="patcher-svg">
+                                <defs>
+                                    <!-- Cable glow filter -->
+                                    <filter id="cable-glow" x="-50%" y="-50%" width="200%" height="200%">
+                                        <feGaussianBlur stdDeviation="2" result="blur"/>
+                                        <feMerge>
+                                            <feMergeNode in="blur"/>
+                                            <feMergeNode in="SourceGraphic"/>
+                                        </feMerge>
+                                    </filter>
+                                    <!-- Port highlight gradient -->
+                                    <radialGradient id="port-highlight">
+                                        <stop offset="0%" stop-color="#fff" stop-opacity="0.3"/>
+                                        <stop offset="100%" stop-color="#fff" stop-opacity="0"/>
+                                    </radialGradient>
+                                </defs>
+                                <g id="cables-layer"></g>
+                                <g id="devices-layer"></g>
+                                <g id="temp-cable-layer"></g>
+                            </svg>
+                        </div>
+
+                        <!-- Empty state -->
+                        <div id="empty-state" class="text-center py-5">
+                            <i class="mdi mdi-cable-data mdi-48px text-muted"></i>
+                            <h4 class="mt-3 text-muted">Select a Location</h4>
+                            <p class="text-muted">Choose a site, location, or rack to view devices and their connections.</p>
+                        </div>
+
+                        <!-- Loading state -->
+                        <div id="loading-state" class="text-center py-5" style="display: none;">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-3 text-muted">Loading devices...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cable Info Panel (shown when cable selected) -->
+    <div id="cable-info-panel" class="card mt-3" style="display: none;">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="mdi mdi-information"></i> Cable Details</h5>
+            <button type="button" class="btn-close" id="close-cable-panel"></button>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-4">
+                    <strong>From:</strong>
+                    <p id="cable-from" class="mb-2">-</p>
+                </div>
+                <div class="col-md-4">
+                    <strong>To:</strong>
+                    <p id="cable-to" class="mb-2">-</p>
+                </div>
+                <div class="col-md-2">
+                    <strong>Type:</strong>
+                    <p id="cable-type" class="mb-2">-</p>
+                </div>
+                <div class="col-md-2">
+                    <strong>Status:</strong>
+                    <p id="cable-status" class="mb-2">-</p>
+                </div>
+            </div>
+            <div class="mt-2">
+                <a id="cable-netbox-link" href="#" class="btn btn-sm btn-outline-primary" target="_blank">
+                    <i class="mdi mdi-open-in-new"></i> View in NetBox
+                </a>
+                <button type="button" class="btn btn-sm btn-outline-danger" id="delete-cable-btn">
+                    <i class="mdi mdi-delete"></i> Delete Cable
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Create Cable Modal -->
+<div class="modal fade" id="create-cable-modal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="mdi mdi-cable-data"></i> Create Cable</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">From</label>
+                    <input type="text" class="form-control" id="cable-from-input" readonly>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">To</label>
+                    <input type="text" class="form-control" id="cable-to-input" readonly>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Cable Type</label>
+                    <select class="form-select" id="cable-type-select">
+                        <option value="">-- Select Type --</option>
+                        <option value="cat3">CAT3</option>
+                        <option value="cat5">CAT5</option>
+                        <option value="cat5e">CAT5e</option>
+                        <option value="cat6">CAT6</option>
+                        <option value="cat6a">CAT6a</option>
+                        <option value="cat7">CAT7</option>
+                        <option value="cat7a">CAT7a</option>
+                        <option value="cat8">CAT8</option>
+                        <option value="dac-active">Direct Attach Copper (Active)</option>
+                        <option value="dac-passive">Direct Attach Copper (Passive)</option>
+                        <option value="mmf">Multimode Fiber</option>
+                        <option value="mmf-om1">Multimode Fiber (OM1)</option>
+                        <option value="mmf-om2">Multimode Fiber (OM2)</option>
+                        <option value="mmf-om3">Multimode Fiber (OM3)</option>
+                        <option value="mmf-om4">Multimode Fiber (OM4)</option>
+                        <option value="mmf-om5">Multimode Fiber (OM5)</option>
+                        <option value="smf">Singlemode Fiber</option>
+                        <option value="smf-os1">Singlemode Fiber (OS1)</option>
+                        <option value="smf-os2">Singlemode Fiber (OS2)</option>
+                        <option value="coaxial">Coaxial</option>
+                        <option value="power">Power</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Color</label>
+                    <input type="color" class="form-control form-control-color" id="cable-color-input" value="#000000">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Label</label>
+                    <input type="text" class="form-control" id="cable-label-input" placeholder="Optional label">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="create-cable-btn">
+                    <i class="mdi mdi-check"></i> Create Cable
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Port Tooltip -->
+<div id="port-tooltip" class="port-tooltip" style="display: none;">
+    <div class="port-tooltip-content">
+        <strong id="tooltip-port-name"></strong>
+        <div id="tooltip-port-type" class="text-muted small"></div>
+        <div id="tooltip-connection" class="mt-1"></div>
+    </div>
+</div>
+{% endblock content %}
+
+{% block javascript %}
+<script src="{% static 'netbox_cable_patcher/js/patcher.js' %}"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Get CSRF token
+        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value ||
+                         document.cookie.split('; ').find(row => row.startsWith('csrftoken='))?.split('=')[1];
+
+        // Initialize the patcher
+        window.patcher = new CablePatcher({
+            container: document.getElementById('patcher-container'),
+            svg: document.getElementById('patcher-svg'),
+            csrfToken: csrfToken
+        });
+
+        // Load initial data if params provided
+        {% if selected_site %}
+        document.getElementById('site-select').value = '{{ selected_site }}';
+        {% endif %}
+    });
+</script>
+{% endblock %}
