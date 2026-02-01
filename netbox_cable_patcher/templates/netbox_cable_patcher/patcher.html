@@ -267,7 +267,7 @@
         });
 
         {% if selected_site %}
-        document.getElementById('site-select').value = '{{ selected_site }}';
+        document.getElementById('site-select').value = '{{ selected_site|escapejs }}';
         {% endif %}
     });
 </script>

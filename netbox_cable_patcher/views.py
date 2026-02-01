@@ -1,12 +1,13 @@
 from django.views.generic import TemplateView
-from django.contrib.auth.mixins import LoginRequiredMixin
+from django.contrib.auth.mixins import LoginRequiredMixin, PermissionRequiredMixin
 
 from dcim.models import Site, Location, Rack
 
 
-class CablePatcherView(LoginRequiredMixin, TemplateView):
+class CablePatcherView(LoginRequiredMixin, PermissionRequiredMixin, TemplateView):
     """Main view for the cable patcher interface."""
     template_name = 'netbox_cable_patcher/patcher.html'
+    permission_required = 'dcim.view_cable'
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)

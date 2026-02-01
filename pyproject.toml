@@ -6,13 +6,14 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name =  "netbox-cable-patcher"
+name = "netbox-cable-patcher"
 version = "0.1.0"
 authors = [
-    {name = "John Doe"},
+    {name = "NetBox Cable Patcher Contributors"},
 ]
-description = "NetBox plugin for netbox_cable_patcher."
+description = "NetBox plugin providing a visual patch bay interface for managing cable connections."
 readme = "README.md"
+license = {text = "Apache-2.0"}
 
 classifiers=[
     'Development Status :: 3 - Alpha',
@@ -37,13 +38,13 @@ test = [
 ]
 
 [project.urls]
-Documentation = "https://github.com//netbox-cable-patcher/blob/main/README.md"
-Source = "https://github.com//netbox-cable-patcher"
-Tracker = "https://github.com//netbox-cable-patcher/issues"
+Documentation = "https://github.com/netbox-community/netbox-cable-patcher/blob/main/README.md"
+Source = "https://github.com/netbox-community/netbox-cable-patcher"
+Tracker = "https://github.com/netbox-community/netbox-cable-patcher/issues"
 
 [tool.black]
 line-length = 120
 target_version = ['py39', 'py310', 'py311', 'py312']
 
 [tool.setuptools.package-data]
-netbox_cable_patcher = ["templates/**"]
+netbox_cable_patcher = ["templates/**", "static/**"]

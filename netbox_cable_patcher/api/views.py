@@ -1,14 +1,16 @@
 from django.contrib.contenttypes.models import ContentType
+from django.db.models import Prefetch
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.viewsets import ViewSet
 from netbox.api.authentication import IsAuthenticatedOrLoginNotRequired
 
+from dcim.choices import CableStatusChoices
 from dcim.models import (
     Site, Location, Rack, Device, Interface,
     FrontPort, RearPort, PowerPort, PowerOutlet,
-    ConsolePort, ConsoleServerPort, Cable
+    ConsolePort, ConsoleServerPort, Cable, CableTermination
 )
 
 from .serializers import (
@@ -34,7 +36,21 @@ class LocationsViewSet(ViewSet):
 
     def list(self, request):
         """Get all sites with their locations and racks."""
-        sites = Site.objects.all().order_by('name')
+        # Use prefetch_related to avoid N+1 queries
+        sites = Site.objects.prefetch_related(
+            Prefetch(
+                'locations',
+                queryset=Location.objects.prefetch_related(
+                    Prefetch('racks', queryset=Rack.objects.order_by('name'))
+                ).order_by('name')
+            ),
+            Prefetch(
+                'racks',
+                queryset=Rack.objects.filter(location__isnull=True).order_by('name'),
+                to_attr='site_level_racks'
+            )
+        ).order_by('name')
+
         result = []
 
         for site in sites:
@@ -46,24 +62,24 @@ class LocationsViewSet(ViewSet):
                 'racks': []
             }
 
-            # Get locations for this site
-            for location in site.locations.all().order_by('name'):
+            # Get locations for this site (already prefetched)
+            for location in site.locations.all():
                 location_data = {
                     'id': location.id,
                     'name': location.name,
                     'slug': location.slug,
                     'racks': []
                 }
-                # Get racks in this location
-                for rack in location.racks.all().order_by('name'):
+                # Get racks in this location (already prefetched)
+                for rack in location.racks.all():
                     location_data['racks'].append({
                         'id': rack.id,
                         'name': rack.name
                     })
                 site_data['locations'].append(location_data)
 
-            # Get racks directly in site (no location)
-            for rack in site.racks.filter(location__isnull=True).order_by('name'):
+            # Get racks directly in site (no location) - using prefetched attribute
+            for rack in site.site_level_racks:
                 site_data['racks'].append({
                     'id': rack.id,
                     'name': rack.name
@@ -148,7 +164,6 @@ class CablesViewSet(ViewSet):
 
             if termination_ids:
                 # Find cables with these terminations
-                from dcim.models import CableTermination
                 cable_ids = CableTermination.objects.filter(
                     termination_type=ct,
                     termination_id__in=termination_ids
@@ -164,6 +179,13 @@ class CablesViewSet(ViewSet):
 
     def create(self, request):
         """Create a new cable connection."""
+        # Check permission
+        if not request.user.has_perm('dcim.add_cable'):
+            return Response(
+                {'error': 'Permission denied. You do not have permission to create cables.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         serializer = CableCreateSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -204,7 +226,7 @@ class CablesViewSet(ViewSet):
         # Create the cable
         cable = Cable(
             type=data.get('type', ''),
-            status=data.get('status', 'connected'),
+            status=data.get('status', CableStatusChoices.STATUS_CONNECTED),
             color=data.get('color', ''),
             label=data.get('label', ''),
         )
@@ -214,7 +236,6 @@ class CablesViewSet(ViewSet):
         a_ct = ContentType.objects.get_for_model(a_model)
         b_ct = ContentType.objects.get_for_model(b_model)
 
-        from dcim.models import CableTermination
         CableTermination.objects.create(
             cable=cable,
             cable_end='A',
@@ -235,6 +256,13 @@ class CablesViewSet(ViewSet):
 
     def destroy(self, request, pk=None):
         """Delete a cable."""
+        # Check permission
+        if not request.user.has_perm('dcim.delete_cable'):
+            return Response(
+                {'error': 'Permission denied. You do not have permission to delete cables.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         try:
             cable = Cable.objects.get(pk=pk)
         except Cable.DoesNotExist:

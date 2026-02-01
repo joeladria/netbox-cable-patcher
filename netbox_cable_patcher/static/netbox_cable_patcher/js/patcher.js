@@ -623,11 +623,22 @@ class CablePatcher {
         portName.textContent = port.name;
         portType.textContent = port.type || port.port_type;
 
+        // Clear any existing content
+        connection.innerHTML = '';
+
         if (port.connected_endpoint) {
             const ep = port.connected_endpoint;
-            connection.innerHTML = `<span class="badge bg-success">Connected</span> to ${ep.device_name} - ${ep.name}`;
+            // Use safe DOM construction to prevent XSS
+            const badge = document.createElement('span');
+            badge.className = 'badge bg-success';
+            badge.textContent = 'Connected';
+            connection.appendChild(badge);
+            connection.appendChild(document.createTextNode(` to ${ep.device_name} - ${ep.name}`));
         } else {
-            connection.innerHTML = '<span class="badge bg-secondary">Available</span>';
+            const badge = document.createElement('span');
+            badge.className = 'badge bg-secondary';
+            badge.textContent = 'Available';
+            connection.appendChild(badge);
         }
 
         // Position tooltip
@@ -972,8 +983,59 @@ class CablePatcher {
     }
 
     showError(message) {
-        // Could implement toast/alert system
         console.error(message);
+
+        // Try to use NetBox's toast notification system if available
+        if (typeof htmx !== 'undefined' && htmx.trigger) {
+            // NetBox uses htmx for toast notifications
+            htmx.trigger(document.body, 'htmx:showToast', {
+                message: message,
+                level: 'danger'
+            });
+            return;
+        }
+
+        // Fallback: Create a Bootstrap toast if available
+        const toastContainer = document.querySelector('.toast-container') ||
+            this.createToastContainer();
+
+        const toastEl = document.createElement('div');
+        toastEl.className = 'toast align-items-center text-bg-danger border-0';
+        toastEl.setAttribute('role', 'alert');
+        toastEl.setAttribute('aria-live', 'assertive');
+        toastEl.setAttribute('aria-atomic', 'true');
+        toastEl.innerHTML = `
+            <div class="d-flex">
+                <div class="toast-body">${this.escapeHtml(message)}</div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto"
+                        data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+        `;
+
+        toastContainer.appendChild(toastEl);
+
+        // Try Bootstrap Toast API, fallback to manual show/hide
+        const Toast = window.bootstrap?.Toast || globalThis.bootstrap?.Toast;
+        if (Toast) {
+            new Toast(toastEl, { autohide: true, delay: 5000 }).show();
+        } else {
+            toastEl.classList.add('show');
+            setTimeout(() => toastEl.remove(), 5000);
+        }
+    }
+
+    createToastContainer() {
+        const container = document.createElement('div');
+        container.className = 'toast-container position-fixed top-0 end-0 p-3';
+        container.style.zIndex = '1100';
+        document.body.appendChild(container);
+        return container;
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 
     setZoom(level) {
