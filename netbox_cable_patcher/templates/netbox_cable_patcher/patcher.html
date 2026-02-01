@@ -27,19 +27,19 @@
                         <!-- Location Selectors -->
                         <div class="col-md-2">
                             <label for="site-select" class="form-label">Site</label>
-                            <select id="site-select" class="form-select">
+                            <select id="site-select" class="form-control">
                                 <option value="">Select Site...</option>
                             </select>
                         </div>
                         <div class="col-md-2">
                             <label for="location-select" class="form-label">Location</label>
-                            <select id="location-select" class="form-select" disabled>
+                            <select id="location-select" class="form-control" disabled>
                                 <option value="">Select Location...</option>
                             </select>
                         </div>
                         <div class="col-md-2">
                             <label for="rack-select" class="form-label">Rack</label>
-                            <select id="rack-select" class="form-select" disabled>
+                            <select id="rack-select" class="form-control" disabled>
                                 <option value="">Select Rack...</option>
                             </select>
                         </div>
@@ -47,7 +47,7 @@
                         <!-- Primary Device Selector -->
                         <div class="col-md-2">
                             <label for="primary-device-select" class="form-label">Primary Device</label>
-                            <select id="primary-device-select" class="form-select" disabled>
+                            <select id="primary-device-select" class="form-control" disabled>
                                 <option value="">Select Device...</option>
                             </select>
                         </div>
@@ -257,18 +257,15 @@
 <script src="{% static 'netbox_cable_patcher/js/patcher.js' %}"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        // Get CSRF token
         const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value ||
                          document.cookie.split('; ').find(row => row.startsWith('csrftoken='))?.split('=')[1];
 
-        // Initialize the patcher
         window.patcher = new CablePatcher({
             container: document.getElementById('patcher-container'),
             svg: document.getElementById('patcher-svg'),
             csrfToken: csrfToken
         });
 
-        // Load initial data if params provided
         {% if selected_site %}
         document.getElementById('site-select').value = '{{ selected_site }}';
         {% endif %}

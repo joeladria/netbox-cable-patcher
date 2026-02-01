@@ -69,11 +69,19 @@ class CablePatcher {
     }
 
     setupEventListeners() {
+        // Helper to safely add event listeners
+        const addListener = (id, event, handler) => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.addEventListener(event, handler);
+            }
+        };
+
         // Location selectors
-        document.getElementById('site-select').addEventListener('change', (e) => this.onSiteChange(e));
-        document.getElementById('location-select').addEventListener('change', (e) => this.onLocationChange(e));
-        document.getElementById('rack-select').addEventListener('change', (e) => this.onRackChange(e));
-        document.getElementById('primary-device-select').addEventListener('change', (e) => this.onPrimaryDeviceChange(e));
+        addListener('site-select', 'change', (e) => this.onSiteChange(e));
+        addListener('location-select', 'change', (e) => this.onLocationChange(e));
+        addListener('rack-select', 'change', (e) => this.onRackChange(e));
+        addListener('primary-device-select', 'change', (e) => this.onPrimaryDeviceChange(e));
 
         // Mode switches
         document.querySelectorAll('input[name="mode"]').forEach(radio => {
@@ -81,20 +89,22 @@ class CablePatcher {
         });
 
         // Zoom controls
-        document.getElementById('zoom-in').addEventListener('click', () => this.setZoom(this.zoom + 0.1));
-        document.getElementById('zoom-out').addEventListener('click', () => this.setZoom(this.zoom - 0.1));
-        document.getElementById('zoom-reset').addEventListener('click', () => this.setZoom(1));
+        addListener('zoom-in', 'click', () => this.setZoom(this.zoom + 0.1));
+        addListener('zoom-out', 'click', () => this.setZoom(this.zoom - 0.1));
+        addListener('zoom-reset', 'click', () => this.setZoom(1));
 
         // Cable panel
-        document.getElementById('close-cable-panel').addEventListener('click', () => this.closeCablePanel());
-        document.getElementById('delete-cable-btn').addEventListener('click', () => this.deleteSelectedCable());
+        addListener('close-cable-panel', 'click', () => this.closeCablePanel());
+        addListener('delete-cable-btn', 'click', () => this.deleteSelectedCable());
 
         // Create cable modal
-        document.getElementById('create-cable-btn').addEventListener('click', () => this.createCable());
+        addListener('create-cable-btn', 'click', () => this.createCable());
 
         // SVG events for cable drawing
-        this.svg.addEventListener('mousemove', (e) => this.onSvgMouseMove(e));
-        this.svg.addEventListener('click', (e) => this.onSvgClick(e));
+        if (this.svg) {
+            this.svg.addEventListener('mousemove', (e) => this.onSvgMouseMove(e));
+            this.svg.addEventListener('click', (e) => this.onSvgClick(e));
+        }
 
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => {
@@ -108,15 +118,12 @@ class CablePatcher {
     // ========== API Methods ==========
 
     async apiGet(endpoint) {
-        const url = this.apiBase + endpoint;
-        console.log('API GET:', url);
-        const response = await fetch(url, {
+        const response = await fetch(this.apiBase + endpoint, {
             credentials: 'same-origin',
             headers: {
                 'Accept': 'application/json',
             }
         });
-        console.log('API Response:', response.status, response.statusText);
         if (!response.ok) throw new Error(`API error: ${response.status}`);
         return response.json();
     }
@@ -156,51 +163,60 @@ class CablePatcher {
 
     async loadLocations() {
         try {
-            // Use plugin endpoint which returns hierarchical site/location/rack data
-            // in a single response via `netbox_cable_patcher.api.LocationsViewSet`.
             const resp = await this.apiGet('locations/');
-            // Accept multiple response shapes: either a raw array, or an object
-            // with a `results` field (defensive for misrouted NetBox API calls).
+
             if (Array.isArray(resp)) {
                 this.locations = resp;
             } else if (resp && Array.isArray(resp.results)) {
                 this.locations = resp.results;
             } else {
-                console.warn('Unexpected locations response shape', resp);
                 this.locations = [];
             }
 
-            console.debug('Loaded locations:', this.locations.length);
-
             this.populateSiteSelect();
         } catch (error) {
-            console.error('Failed to load locations:', error);
+            console.error('CablePatcher: Failed to load locations:', error);
             this.showError('Failed to load locations');
         }
     }
 
     populateSiteSelect() {
-        const select = document.getElementById('site-select');
-        if (!select) {
-            console.error('site-select element not found');
-            return;
+        const options = this.locations
+            .filter(site => site.id)
+            .map(site => ({ value: site.id, text: site.name }));
+        this.populateSelect('site-select', options, 'Select Site...');
+    }
+
+    // Helper to populate select elements, handling TomSelect if present
+    populateSelect(selectId, options, placeholder = 'Select...', disabled = false) {
+        const select = document.getElementById(selectId);
+        if (!select) return;
+
+        const ts = select.tomselect;
+
+        if (ts) {
+            // TomSelect: use its API
+            ts.clear();
+            ts.clearOptions();
+            ts.addOption({ value: '', text: placeholder });
+            options.forEach(opt => {
+                ts.addOption({ value: opt.value, text: opt.text });
+            });
+            ts.refreshOptions(false);
+            if (disabled) {
+                ts.disable();
+            } else {
+                ts.enable();
+            }
+        } else {
+            // Native select
+            select.innerHTML = '';
+            select.add(new Option(placeholder, ''));
+            options.forEach(opt => {
+                select.add(new Option(opt.text, opt.value));
+            });
+            select.disabled = disabled;
         }
-
-        console.debug('populateSiteSelect: locations=', this.locations);
-
-        select.innerHTML = '<option value="">Select Site...</option>';
-
-        this.locations.forEach(site => {
-            // Defensive mapping for different response shapes
-            const id = site.id || site.pk || (site.site && site.site.id);
-            const name = site.name || site.display_name || (site.site && site.site.name) || (site.title || null) || JSON.stringify(site);
-            if (!id) return;
-
-            const option = document.createElement('option');
-            option.value = id;
-            option.textContent = name;
-            select.appendChild(option);
-        });
     }
 
     async loadDevices(params) {
@@ -248,29 +264,18 @@ class CablePatcher {
     }
 
     populatePrimaryDeviceSelect() {
-        const select = document.getElementById('primary-device-select');
-        select.innerHTML = '<option value="">Select Device...</option>';
-        select.disabled = this.devices.length === 0;
-
-        this.devices.forEach(device => {
-            const option = document.createElement('option');
-            option.value = device.id;
-            option.textContent = device.name;
-            select.appendChild(option);
-        });
+        const options = this.devices.map(d => ({ value: d.id, text: d.name }));
+        this.populateSelect('primary-device-select', options, 'Select Device...', this.devices.length === 0);
     }
 
     // ========== Event Handlers ==========
 
     onSiteChange(e) {
         const siteId = e.target.value;
-        const locationSelect = document.getElementById('location-select');
-        const rackSelect = document.getElementById('rack-select');
 
-        locationSelect.innerHTML = '<option value="">Select Location...</option>';
-        rackSelect.innerHTML = '<option value="">Select Rack...</option>';
-        locationSelect.disabled = true;
-        rackSelect.disabled = true;
+        // Reset dependent dropdowns
+        this.populateSelect('location-select', [], 'Select Location...', true);
+        this.populateSelect('rack-select', [], 'Select Rack...', true);
 
         if (!siteId) {
             this.showEmpty();
@@ -282,24 +287,14 @@ class CablePatcher {
 
         // Populate locations
         if (site.locations.length > 0) {
-            locationSelect.disabled = false;
-            site.locations.forEach(loc => {
-                const option = document.createElement('option');
-                option.value = loc.id;
-                option.textContent = loc.name;
-                locationSelect.appendChild(option);
-            });
+            const locOptions = site.locations.map(l => ({ value: l.id, text: l.name }));
+            this.populateSelect('location-select', locOptions, 'Select Location...', false);
         }
 
         // Populate racks (site-level racks)
         if (site.racks.length > 0 || site.locations.length === 0) {
-            rackSelect.disabled = false;
-            site.racks.forEach(rack => {
-                const option = document.createElement('option');
-                option.value = rack.id;
-                option.textContent = rack.name;
-                rackSelect.appendChild(option);
-            });
+            const rackOptions = site.racks.map(r => ({ value: r.id, text: r.name }));
+            this.populateSelect('rack-select', rackOptions, 'Select Rack...', false);
         }
 
         // Load devices for entire site if no more specific selection
@@ -308,10 +303,10 @@ class CablePatcher {
 
     onLocationChange(e) {
         const locationId = e.target.value;
-        const rackSelect = document.getElementById('rack-select');
         const siteId = document.getElementById('site-select').value;
 
-        rackSelect.innerHTML = '<option value="">Select Rack...</option>';
+        // Reset rack dropdown
+        this.populateSelect('rack-select', [], 'Select Rack...', true);
 
         if (!locationId) {
             // Fall back to site-level
@@ -325,13 +320,8 @@ class CablePatcher {
         const location = site?.locations.find(l => l.id == locationId);
 
         if (location && location.racks.length > 0) {
-            rackSelect.disabled = false;
-            location.racks.forEach(rack => {
-                const option = document.createElement('option');
-                option.value = rack.id;
-                option.textContent = rack.name;
-                rackSelect.appendChild(option);
-            });
+            const rackOptions = location.racks.map(r => ({ value: r.id, text: r.name }));
+            this.populateSelect('rack-select', rackOptions, 'Select Rack...', false);
         }
 
         this.loadDevices({ location: locationId });
