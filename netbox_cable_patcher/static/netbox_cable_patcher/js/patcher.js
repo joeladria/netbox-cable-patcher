@@ -98,12 +98,26 @@ class CablePatcher {
         addListener('delete-cable-btn', 'click', () => this.deleteSelectedCable());
 
         // Create cable modal
-        addListener('create-cable-btn', 'click', () => this.createCable());
+        addListener('create-cable-btn', 'click', () => {
+            console.log('Create cable button clicked');
+            this.createCable();
+        });
+
+        // Modal dismiss buttons (for when Bootstrap isn't available as global)
+        document.querySelectorAll('[data-bs-dismiss="modal"]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const modal = btn.closest('.modal');
+                if (modal) this.hideModal(modal.id);
+            });
+        });
 
         // SVG events for cable drawing
         if (this.svg) {
             this.svg.addEventListener('mousemove', (e) => this.onSvgMouseMove(e));
-            this.svg.addEventListener('click', (e) => this.onSvgClick(e));
+            this.svg.addEventListener('click', (e) => {
+                console.log('SVG click target:', e.target.tagName, e.target.className?.baseVal || e.target.className);
+                this.onSvgClick(e);
+            });
         }
 
         // Keyboard shortcuts
@@ -629,9 +643,11 @@ class CablePatcher {
 
     onPortClick(e, port, device) {
         e.stopPropagation();
+        console.log('Port clicked:', port.name, 'cable_id:', port.cable_id, 'pending:', !!this.pendingConnection);
 
         // If port is already connected, select the cable
         if (port.cable_id) {
+            console.log('Port already connected, selecting cable');
             const cable = this.cables.find(c => c.id === port.cable_id);
             if (cable) {
                 this.selectCable(cable);
@@ -641,11 +657,13 @@ class CablePatcher {
 
         // If no pending connection, start one
         if (!this.pendingConnection) {
+            console.log('Starting new connection');
             this.startConnection(port, device);
             return;
         }
 
         // If we have a pending connection, complete it
+        console.log('Completing connection');
         this.completeConnection(port, device);
     }
 
@@ -695,10 +713,66 @@ class CablePatcher {
         };
 
         // Show modal
-        const modal = new bootstrap.Modal(document.getElementById('create-cable-modal'));
-        modal.show();
-
+        this.showModal('create-cable-modal');
         this.cancelPendingConnection();
+    }
+
+    showModal(modalId) {
+        const modalEl = document.getElementById(modalId);
+        if (!modalEl) return;
+
+        // Try Bootstrap first
+        const Modal = window.bootstrap?.Modal || globalThis.bootstrap?.Modal;
+        if (Modal) {
+            Modal.getOrCreateInstance(modalEl).show();
+            return;
+        }
+
+        // Manual modal handling
+        modalEl.style.display = 'block';
+        modalEl.classList.add('show');
+        modalEl.setAttribute('aria-modal', 'true');
+        modalEl.removeAttribute('aria-hidden');
+
+        // Add backdrop
+        let backdrop = document.querySelector('.modal-backdrop');
+        if (!backdrop) {
+            backdrop = document.createElement('div');
+            backdrop.className = 'modal-backdrop fade show';
+            document.body.appendChild(backdrop);
+        }
+        document.body.classList.add('modal-open');
+    }
+
+    hideModal(modalId) {
+        console.log('hideModal called for:', modalId);
+        const modalEl = document.getElementById(modalId);
+        if (!modalEl) {
+            console.log('Modal element not found');
+            return;
+        }
+
+        // Try Bootstrap first
+        const Modal = window.bootstrap?.Modal || globalThis.bootstrap?.Modal;
+        if (Modal) {
+            console.log('Using Bootstrap Modal.hide()');
+            Modal.getInstance(modalEl)?.hide();
+            return;
+        }
+
+        // Manual modal handling
+        console.log('Using manual modal hide');
+        modalEl.style.display = 'none';
+        modalEl.classList.remove('show');
+        modalEl.setAttribute('aria-hidden', 'true');
+        modalEl.removeAttribute('aria-modal');
+
+        // Remove backdrop
+        const backdrop = document.querySelector('.modal-backdrop');
+        console.log('Backdrop element:', backdrop);
+        if (backdrop) backdrop.remove();
+        document.body.classList.remove('modal-open');
+        console.log('Modal hide complete');
     }
 
     cancelPendingConnection() {
@@ -801,7 +875,11 @@ class CablePatcher {
     }
 
     async createCable() {
-        if (!this._pendingCableData) return;
+        console.log('createCable called, pendingData:', this._pendingCableData);
+        if (!this._pendingCableData) {
+            console.log('No pending cable data, returning');
+            return;
+        }
 
         const cableType = document.getElementById('cable-type-select').value;
         const color = document.getElementById('cable-color-input').value.replace('#', '');
@@ -820,11 +898,16 @@ class CablePatcher {
         if (color) cableData.color = color;
         if (label) cableData.label = label;
 
+        console.log('Posting cable data:', cableData);
+
         try {
             const cable = await this.apiPost('cables/', cableData);
+            console.log('Cable created:', cable);
 
             // Close modal
-            bootstrap.Modal.getInstance(document.getElementById('create-cable-modal')).hide();
+            console.log('Hiding modal...');
+            this.hideModal('create-cable-modal');
+            console.log('Modal hidden');
 
             // Clear form
             document.getElementById('cable-type-select').value = '';
