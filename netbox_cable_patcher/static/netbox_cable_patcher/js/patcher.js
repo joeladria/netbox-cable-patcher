@@ -20,7 +20,14 @@ class CablePatcher {
         this.currentMode = 'network';
         this.zoom = 1;
         this.selectedCable = null;
+        this.selectedCables = [];
         this.pendingConnection = null;
+
+        // Drag state for device reordering
+        this.draggingDevice = null;
+        this.dragStartY = 0;
+        this.dragOffsetY = 0;
+        this.deviceOrder = []; // stores ordered secondary device IDs
 
         // SVG layers
         this.cablesLayer = document.getElementById('cables-layer');
@@ -228,13 +235,18 @@ class CablePatcher {
             });
         });
 
-        // SVG events for cable drawing
+        // SVG events for cable drawing and device dragging
         if (this.svg) {
-            this.svg.addEventListener('mousemove', (e) => this.onSvgMouseMove(e));
+            this.svg.addEventListener('mousemove', (e) => {
+                this.onSvgMouseMove(e);
+                this.onDeviceDrag(e);
+            });
             this.svg.addEventListener('click', (e) => {
                 console.log('SVG click target:', e.target.tagName, e.target.className?.baseVal || e.target.className);
                 this.onSvgClick(e);
             });
+            this.svg.addEventListener('mouseup', (e) => this.onDeviceDragEnd(e));
+            this.svg.addEventListener('mouseleave', (e) => this.onDeviceDragEnd(e));
         }
 
         // Keyboard shortcuts
@@ -242,6 +254,28 @@ class CablePatcher {
             if (e.key === 'Escape') {
                 this.cancelPendingConnection();
                 this.closeCablePanel();
+            }
+
+            // Delete/Backspace deletes selected cable(s)
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+                // Don't trigger when typing in an input/select
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+                if (this.selectedCables && this.selectedCables.length > 0) {
+                    e.preventDefault();
+                    this.deleteSelectedCables();
+                } else if (this.selectedCable) {
+                    e.preventDefault();
+                    this.deleteSelectedCable();
+                }
+            }
+
+            // Enter submits the create-cable modal when visible
+            if (e.key === 'Enter') {
+                const modal = document.getElementById('create-cable-modal');
+                if (modal && (modal.classList.contains('show') || modal.style.display === 'block')) {
+                    e.preventDefault();
+                    this.createCable();
+                }
             }
         });
     }
@@ -526,7 +560,28 @@ class CablePatcher {
             ? this.devices.find(d => d.id === this.primaryDeviceId)
             : this.devices[0];
 
-        const otherDevices = this.devices.filter(d => d.id !== primaryDevice?.id);
+        // Filter out devices with no ports for the current mode, then sort by connections to primary
+        const otherDevices = this.devices
+            .filter(d => d.id !== primaryDevice?.id)
+            .filter(d => {
+                return portTypes.some(type => (d[type] || []).length > 0);
+            })
+            .sort((a, b) => {
+                if (!primaryDevice) return 0;
+                const countCables = (device) => {
+                    return this.cables.filter(cable => {
+                        const aTerms = cable.a_terminations || [];
+                        const bTerms = cable.b_terminations || [];
+                        const deviceIds = [device.id];
+                        const primaryIds = [primaryDevice.id];
+                        const aDevices = aTerms.map(t => t.device_id);
+                        const bDevices = bTerms.map(t => t.device_id);
+                        return (aDevices.some(id => primaryIds.includes(id)) && bDevices.some(id => deviceIds.includes(id))) ||
+                               (bDevices.some(id => primaryIds.includes(id)) && aDevices.some(id => deviceIds.includes(id)));
+                    }).length;
+                };
+                return countCables(b) - countCables(a);
+            });
 
         // Track port positions for cable routing
         this.portPositions = {};
@@ -539,10 +594,22 @@ class CablePatcher {
             maxHeight = Math.max(maxHeight, height);
         }
 
+        // Apply user-defined device order if available
+        if (this.deviceOrder.length > 0) {
+            const orderMap = new Map(this.deviceOrder.map((id, i) => [id, i]));
+            otherDevices.sort((a, b) => {
+                const ai = orderMap.has(a.id) ? orderMap.get(a.id) : Infinity;
+                const bi = orderMap.has(b.id) ? orderMap.get(b.id) : Infinity;
+                return ai - bi;
+            });
+        }
+
         // Render other devices on right
+        this._secondaryDevicePositions = [];
         let yOffset = 20;
         otherDevices.forEach(device => {
             const height = this.renderDevice(device, this.SECONDARY_X, yOffset, false, portTypes);
+            this._secondaryDevicePositions.push({ device, y: yOffset, height });
             yOffset += height + this.DEVICE_GAP;
             maxHeight = Math.max(maxHeight, yOffset);
         });
@@ -626,11 +693,47 @@ class CablePatcher {
         text.textContent = device.name;
         g.appendChild(text);
 
+        // Drag handle for secondary (right-side) devices
+        if (!isPrimary) {
+            headerBg.style.cursor = 'grab';
+            headerCover.style.cursor = 'grab';
+
+            const onDragStart = (e) => {
+                // Use a threshold to distinguish clicks from drags
+                const svgPt = this.svgPoint(e);
+                this.draggingDevice = {
+                    deviceId: device.id,
+                    group: g,
+                    startY: svgPt.y,
+                    origTranslateY: 0,
+                    moved: false
+                };
+                headerBg.style.cursor = 'grabbing';
+                headerCover.style.cursor = 'grabbing';
+                e.preventDefault();
+            };
+
+            headerBg.addEventListener('mousedown', onDragStart);
+            headerCover.addEventListener('mousedown', onDragStart);
+        }
+
         // Render ports
-        const portX = isPrimary ? x + this.DEVICE_WIDTH - this.DEVICE_PADDING : x + this.DEVICE_PADDING;
+        // Default: primary device ports on right edge, secondary on left edge
+        // In power mode, reverse: outlets face right (toward cables), power ports face left
+        const defaultPortX = isPrimary ? x + this.DEVICE_WIDTH - this.DEVICE_PADDING : x + this.DEVICE_PADDING;
 
         ports.forEach((port, index) => {
             const portY = y + this.DEVICE_HEADER_HEIGHT + (index * this.PORT_HEIGHT) + this.PORT_HEIGHT / 2;
+
+            // In power mode, determine port edge by port type
+            let portX = defaultPortX;
+            if (this.currentMode === 'power') {
+                if (port._portType === 'power_outlets') {
+                    portX = x + this.DEVICE_WIDTH - this.DEVICE_PADDING; // right edge
+                } else if (port._portType === 'power_ports') {
+                    portX = x + this.DEVICE_PADDING; // left edge
+                }
+            }
 
             // Store port position
             const portKey = `${port.port_type}-${port.id}`;
@@ -664,13 +767,14 @@ class CablePatcher {
 
             g.appendChild(circle);
 
-            // Port label
+            // Port label — position based on which edge the port is on
             const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            const labelX = isPrimary ? portX - this.PORT_RADIUS - 5 : portX + this.PORT_RADIUS + 5;
+            const portOnRight = portX > x + this.DEVICE_WIDTH / 2;
+            const labelX = portOnRight ? portX - this.PORT_RADIUS - 5 : portX + this.PORT_RADIUS + 5;
             label.setAttribute('x', labelX);
             label.setAttribute('y', portY + 4);
             label.setAttribute('class', 'port-label');
-            label.setAttribute('text-anchor', isPrimary ? 'end' : 'start');
+            label.setAttribute('text-anchor', portOnRight ? 'end' : 'start');
             label.textContent = port.name;
             g.appendChild(label);
         });
@@ -726,10 +830,10 @@ class CablePatcher {
             path.classList.add('decommissioning');
         }
 
-        // Click handler
+        // Click handler — pass event for multi-select detection
         path.addEventListener('click', (e) => {
             e.stopPropagation();
-            this.selectCable(cable);
+            this.selectCable(cable, e);
         });
 
         this.cablesLayer.appendChild(path);
@@ -796,7 +900,7 @@ class CablePatcher {
             console.log('Port already connected, selecting cable');
             const cable = this.cables.find(c => c.id === port.cable_id);
             if (cable) {
-                this.selectCable(cable);
+                this.selectCable(cable, e);
             }
             return;
         }
@@ -857,6 +961,13 @@ class CablePatcher {
             b_termination_type: to.port.port_type,
             b_termination_id: to.port.id
         };
+
+        // Pre-select cable type based on current mode
+        const defaultTypes = { network: 'cat6', power: 'power', patch: 'mmf-om4' };
+        const typeSelect = document.getElementById('cable-type-select');
+        if (typeSelect && defaultTypes[this.currentMode]) {
+            typeSelect.value = defaultTypes[this.currentMode];
+        }
 
         // Show modal
         this.showModal('create-cable-modal');
@@ -967,43 +1078,167 @@ class CablePatcher {
         }
     }
 
-    // ========== Cable Management ==========
+    // ========== Device Dragging ==========
 
-    selectCable(cable) {
-        // Deselect previous
-        if (this.selectedCable) {
-            const prevPath = document.querySelector(`path[data-cable-id="${this.selectedCable.id}"]`);
-            if (prevPath) prevPath.classList.remove('selected');
+    svgPoint(e) {
+        const pt = this.svg.createSVGPoint();
+        pt.x = e.clientX;
+        pt.y = e.clientY;
+        return pt.matrixTransform(this.svg.getScreenCTM().inverse());
+    }
+
+    onDeviceDrag(e) {
+        if (!this.draggingDevice) return;
+
+        const svgPt = this.svgPoint(e);
+        const dy = svgPt.y - this.draggingDevice.startY;
+
+        // Movement threshold to distinguish from click
+        if (Math.abs(dy) < 5 && !this.draggingDevice.moved) return;
+        this.draggingDevice.moved = true;
+
+        // Move the device group visually
+        const g = this.draggingDevice.group;
+        g.setAttribute('transform', `translate(0, ${dy})`);
+        g.style.opacity = '0.7';
+    }
+
+    onDeviceDragEnd(e) {
+        if (!this.draggingDevice) return;
+
+        const drag = this.draggingDevice;
+        this.draggingDevice = null;
+
+        // Reset visual state
+        drag.group.removeAttribute('transform');
+        drag.group.style.opacity = '';
+
+        if (!drag.moved) return;
+
+        // Determine new order based on drop position
+        const svgPt = this.svgPoint(e);
+        const positions = this._secondaryDevicePositions || [];
+        if (positions.length === 0) return;
+
+        // Find where the device was dropped (by Y center)
+        const draggedIdx = positions.findIndex(p => p.device.id === drag.deviceId);
+        if (draggedIdx === -1) return;
+
+        const draggedPos = positions[draggedIdx];
+        const draggedCenter = draggedPos.y + draggedPos.height / 2 + (svgPt.y - drag.startY);
+
+        // Find target index
+        let targetIdx = positions.length - 1;
+        for (let i = 0; i < positions.length; i++) {
+            const mid = positions[i].y + positions[i].height / 2;
+            if (draggedCenter < mid) {
+                targetIdx = i;
+                break;
+            }
         }
 
-        this.selectedCable = cable;
+        // Reorder
+        const orderedIds = positions.map(p => p.device.id);
+        const [removed] = orderedIds.splice(draggedIdx, 1);
+        if (targetIdx > draggedIdx) targetIdx--;
+        orderedIds.splice(targetIdx, 0, removed);
 
-        // Highlight selected cable
-        const path = document.querySelector(`path[data-cable-id="${cable.id}"]`);
-        if (path) path.classList.add('selected');
+        this.deviceOrder = orderedIds;
+        this.render();
+    }
 
-        // Show cable info panel
+    // ========== Cable Management ==========
+
+    selectCable(cable, event) {
+        const isMulti = event && (event.ctrlKey || event.metaKey);
+
+        if (isMulti) {
+            // Multi-select: toggle this cable in the selection
+            const idx = this.selectedCables.findIndex(c => c.id === cable.id);
+            if (idx !== -1) {
+                // Deselect it
+                this.selectedCables.splice(idx, 1);
+                const p = document.querySelector(`path[data-cable-id="${cable.id}"]`);
+                if (p) p.classList.remove('selected');
+            } else {
+                this.selectedCables.push(cable);
+                const p = document.querySelector(`path[data-cable-id="${cable.id}"]`);
+                if (p) p.classList.add('selected');
+            }
+
+            // Also add the previously single-selected cable to multi-select if needed
+            if (this.selectedCable && !this.selectedCables.find(c => c.id === this.selectedCable.id)) {
+                this.selectedCables.push(this.selectedCable);
+            }
+            this.selectedCable = null;
+        } else {
+            // Single select: clear multi-select and previous selection
+            this.clearCableSelection();
+            this.selectedCable = cable;
+            this.selectedCables = [];
+
+            const path = document.querySelector(`path[data-cable-id="${cable.id}"]`);
+            if (path) path.classList.add('selected');
+        }
+
+        // Update the info panel
+        this.updateCableInfoPanel();
+    }
+
+    updateCableInfoPanel() {
         const panel = document.getElementById('cable-info-panel');
-        const aTerms = cable.a_terminations || [];
-        const bTerms = cable.b_terminations || [];
+        const multiInfo = document.getElementById('cable-multi-info');
+        const multiCount = document.getElementById('cable-multi-count');
 
-        document.getElementById('cable-from').textContent =
-            aTerms.length > 0 ? `${aTerms[0].device_name} - ${aTerms[0].name}` : 'Unknown';
-        document.getElementById('cable-to').textContent =
-            bTerms.length > 0 ? `${bTerms[0].device_name} - ${bTerms[0].name}` : 'Unknown';
-        document.getElementById('cable-type').textContent = cable.type_display || cable.type || '-';
-        document.getElementById('cable-status').textContent = cable.status_display || cable.status;
-        document.getElementById('cable-netbox-link').href = `/dcim/cables/${cable.id}/`;
+        if (this.selectedCables.length > 1) {
+            // Multi-select view
+            document.getElementById('cable-from').textContent = '-';
+            document.getElementById('cable-to').textContent = '-';
+            document.getElementById('cable-type').textContent = '-';
+            document.getElementById('cable-status').textContent = '-';
+            document.getElementById('cable-netbox-link').style.display = 'none';
+            multiInfo.style.display = 'block';
+            multiCount.textContent = `${this.selectedCables.length} cables selected`;
+            panel.style.display = 'block';
+        } else {
+            // Single cable view
+            const cable = this.selectedCable || (this.selectedCables.length === 1 ? this.selectedCables[0] : null);
+            if (!cable) {
+                panel.style.display = 'none';
+                return;
+            }
 
-        panel.style.display = 'block';
+            const aTerms = cable.a_terminations || [];
+            const bTerms = cable.b_terminations || [];
+
+            document.getElementById('cable-from').textContent =
+                aTerms.length > 0 ? `${aTerms[0].device_name} - ${aTerms[0].name}` : 'Unknown';
+            document.getElementById('cable-to').textContent =
+                bTerms.length > 0 ? `${bTerms[0].device_name} - ${bTerms[0].name}` : 'Unknown';
+            document.getElementById('cable-type').textContent = cable.type_display || cable.type || '-';
+            document.getElementById('cable-status').textContent = cable.status_display || cable.status;
+            document.getElementById('cable-netbox-link').href = `/dcim/cables/${cable.id}/`;
+            document.getElementById('cable-netbox-link').style.display = '';
+            multiInfo.style.display = 'none';
+            panel.style.display = 'block';
+        }
+    }
+
+    clearCableSelection() {
+        if (this.selectedCable) {
+            const p = document.querySelector(`path[data-cable-id="${this.selectedCable.id}"]`);
+            if (p) p.classList.remove('selected');
+        }
+        this.selectedCables.forEach(cable => {
+            const p = document.querySelector(`path[data-cable-id="${cable.id}"]`);
+            if (p) p.classList.remove('selected');
+        });
     }
 
     closeCablePanel() {
-        if (this.selectedCable) {
-            const path = document.querySelector(`path[data-cable-id="${this.selectedCable.id}"]`);
-            if (path) path.classList.remove('selected');
-        }
+        this.clearCableSelection();
         this.selectedCable = null;
+        this.selectedCables = [];
         document.getElementById('cable-info-panel').style.display = 'none';
     }
 
@@ -1070,6 +1305,11 @@ class CablePatcher {
     }
 
     async deleteSelectedCable() {
+        // If multi-select is active, delegate to bulk delete
+        if (this.selectedCables.length > 0) {
+            return this.deleteSelectedCables();
+        }
+
         if (!this.selectedCable) return;
 
         if (!confirm('Are you sure you want to delete this cable?')) return;
@@ -1087,6 +1327,27 @@ class CablePatcher {
 
         } catch (error) {
             alert('Failed to delete cable: ' + error.message);
+        }
+    }
+
+    async deleteSelectedCables() {
+        if (this.selectedCables.length === 0) return;
+
+        const count = this.selectedCables.length;
+        if (!confirm(`Are you sure you want to delete ${count} cable(s)?`)) return;
+
+        try {
+            const ids = this.selectedCables.map(c => c.id);
+            for (const id of ids) {
+                await this.apiDelete(`cables/${id}/`);
+                this.cables = this.cables.filter(c => c.id !== id);
+            }
+
+            this.closeCablePanel();
+            this.reloadCurrentView();
+
+        } catch (error) {
+            alert('Failed to delete cables: ' + error.message);
         }
     }
 
