@@ -1,0 +1,76 @@
+---
+volumes:
+  netbox-cable-patcher:
+    driver: local
+
+services:
+  netbox:
+    container_name: netbox-cable-patcher-netbox
+    image: cable-patcher/netbox:${NETBOX_VERSION}-${PYTHON_VERSION}
+    profiles:
+    - netbox
+    depends_on:
+      - postgres
+      - redis
+    init: true
+    command:
+      - sh
+      - -c
+      - python manage.py migrate && python manage.py runserver 0.0.0.0:8000
+    ports:
+      - '8000:8000'
+    volumes:
+      - ${PWD}/:/opt/netbox_cable_patcher
+      - ${PWD}/develop/configuration.py:/opt/netbox/netbox/netbox/configuration.py
+      - ${PWD}/develop/manage.py:/opt/netbox/netbox/manage.py
+    env_file: ${PWD}/develop/dev.env
+    tty: true
+    build: &build
+      context: ${PWD}
+      dockerfile: ${PWD}/develop/Dockerfile
+      args:
+      - NETBOX_VERSION
+      - PYTHON_VERSION
+
+  worker:
+    container_name: netbox-cable-patcher-worker
+    image: cable-patcher/netbox:${NETBOX_VERSION}-${PYTHON_VERSION}
+    profiles:
+    - netbox
+    depends_on:
+      - netbox
+    init: true
+    command:
+      - sh
+      - -c
+      - python manage.py rqworker
+    volumes:
+      - ${PWD}/:/opt/netbox_cable_patcher
+      - ${PWD}/develop/configuration.py:/opt/netbox/netbox/netbox/configuration.py
+    env_file: ${PWD}/develop/dev.env
+    tty: true
+    build:
+      <<: *build
+
+  postgres:
+    container_name: netbox-cable-patcher-postgres
+    image: postgres:17-alpine
+    profiles:
+    - netbox
+    env_file: dev.env
+    command: -c fsync=off
+    volumes:
+      - netbox-cable-patcher:/var/lib/postgresql/data
+      - ./demo_data:/docker-entrypoint-initdb.d:ro
+
+  redis:
+    container_name: netbox-cable-patcher-redis
+    image: redis:7
+    profiles:
+    - netbox
+    init: true
+    command:
+      - sh
+      - -c
+      - redis-server --appendonly yes --requirepass $$REDIS_PASSWORD
+    env_file: ${PWD}/develop/dev.env

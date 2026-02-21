@@ -6,7 +6,7 @@ from rest_framework.response import Response
 from rest_framework.viewsets import ViewSet
 from netbox.api.authentication import IsAuthenticatedOrLoginNotRequired
 
-from dcim.choices import CableStatusChoices
+from dcim.choices import LinkStatusChoices
 from dcim.models import (
     Site, Location, Rack, Device, Interface,
     FrontPort, RearPort, PowerPort, PowerOutlet,
@@ -226,7 +226,7 @@ class CablesViewSet(ViewSet):
         # Create the cable
         cable = Cable(
             type=data.get('type', ''),
-            status=data.get('status', CableStatusChoices.STATUS_CONNECTED),
+            status=data.get('status', LinkStatusChoices.STATUS_CONNECTED),
             color=data.get('color', ''),
             label=data.get('label', ''),
         )

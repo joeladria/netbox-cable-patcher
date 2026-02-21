@@ -68,6 +68,123 @@ class CablePatcher {
         this.loadLocations();
     }
 
+    // ========== URL State Management ==========
+
+    /**
+     * Read current selections from URL query parameters.
+     * Returns an object with site, location, rack, device, mode keys.
+     */
+    readUrlState() {
+        const params = new URLSearchParams(window.location.search);
+        return {
+            site: params.get('site') || '',
+            location: params.get('location') || '',
+            rack: params.get('rack') || '',
+            device: params.get('device') || '',
+            mode: params.get('mode') || ''
+        };
+    }
+
+    /**
+     * Push current dropdown selections into the URL without reloading.
+     */
+    pushUrlState() {
+        const params = new URLSearchParams();
+        const site = document.getElementById('site-select').value;
+        const location = document.getElementById('location-select').value;
+        const rack = document.getElementById('rack-select').value;
+        const device = document.getElementById('primary-device-select').value;
+        const mode = this.currentMode;
+
+        if (site) params.set('site', site);
+        if (location) params.set('location', location);
+        if (rack) params.set('rack', rack);
+        if (device) params.set('device', device);
+        if (mode && mode !== 'network') params.set('mode', mode);
+
+        const qs = params.toString();
+        const newUrl = window.location.pathname + (qs ? '?' + qs : '');
+        window.history.replaceState(null, '', newUrl);
+    }
+
+    /**
+     * After locations have loaded, restore the full view from URL params.
+     * Walks the cascade: site → location → rack → loadDevices → device.
+     */
+    async restoreFromUrl() {
+        const state = this.readUrlState();
+        if (!state.site) return;
+
+        // Restore mode first
+        if (state.mode) {
+            const modeRadio = document.querySelector(`input[name="mode"][value="${state.mode}"]`);
+            if (modeRadio) {
+                modeRadio.checked = true;
+                this.currentMode = state.mode;
+            }
+        }
+
+        // Set site
+        this.setSelectValue('site-select', state.site);
+        const site = this.locations.find(s => s.id == state.site);
+        if (!site) return;
+
+        // Populate location dropdown
+        if (site.locations.length > 0) {
+            const locOptions = site.locations.map(l => ({ value: l.id, text: l.name }));
+            this.populateSelect('location-select', locOptions, 'Select Location...', false);
+        }
+
+        // Populate site-level racks
+        if (site.racks.length > 0 || site.locations.length === 0) {
+            const rackOptions = site.racks.map(r => ({ value: r.id, text: r.name }));
+            this.populateSelect('rack-select', rackOptions, 'Select Rack...', false);
+        }
+
+        // Set location (if any) and populate its racks
+        if (state.location) {
+            this.setSelectValue('location-select', state.location);
+            const loc = site.locations.find(l => l.id == state.location);
+            if (loc && loc.racks.length > 0) {
+                const rackOptions = loc.racks.map(r => ({ value: r.id, text: r.name }));
+                this.populateSelect('rack-select', rackOptions, 'Select Rack...', false);
+            }
+        }
+
+        // Set rack
+        if (state.rack) {
+            this.setSelectValue('rack-select', state.rack);
+        }
+
+        // Load devices with the most specific filter
+        const loadParams = {};
+        if (state.rack) loadParams.rack = state.rack;
+        else if (state.location) loadParams.location = state.location;
+        else loadParams.site = state.site;
+
+        await this.loadDevices(loadParams);
+
+        // Restore device selection after devices have loaded
+        if (state.device) {
+            this.setSelectValue('primary-device-select', state.device);
+            this.primaryDeviceId = parseInt(state.device) || null;
+            this.render();
+        }
+    }
+
+    /**
+     * Set a <select> value, handling TomSelect if present.
+     */
+    setSelectValue(selectId, value) {
+        const el = document.getElementById(selectId);
+        if (!el) return;
+        if (el.tomselect) {
+            el.tomselect.setValue(value, true);  // silent=true to avoid triggering change
+        } else {
+            el.value = value;
+        }
+    }
+
     setupEventListeners() {
         // Helper to safely add event listeners
         const addListener = (id, event, handler) => {
@@ -188,6 +305,9 @@ class CablePatcher {
             }
 
             this.populateSiteSelect();
+
+            // Restore view from URL params (site/location/rack/device)
+            await this.restoreFromUrl();
         } catch (error) {
             console.error('CablePatcher: Failed to load locations:', error);
             this.showError('Failed to load locations');
@@ -267,7 +387,14 @@ class CablePatcher {
                 this.cables = [];
             }
 
+            // Rebuild the device dropdown, then restore the previous selection
+            // so that cable create/delete doesn't jump to a different device.
+            const previousDeviceId = this.primaryDeviceId;
             this.populatePrimaryDeviceSelect();
+            if (previousDeviceId && this.devices.some(d => d.id === previousDeviceId)) {
+                this.setSelectValue('primary-device-select', previousDeviceId);
+                this.primaryDeviceId = previousDeviceId;
+            }
             this.render();
         } catch (error) {
             console.error('Failed to load devices:', error);
@@ -292,6 +419,7 @@ class CablePatcher {
         this.populateSelect('rack-select', [], 'Select Rack...', true);
 
         if (!siteId) {
+            this.pushUrlState();
             this.showEmpty();
             return;
         }
@@ -313,6 +441,7 @@ class CablePatcher {
 
         // Load devices for entire site if no more specific selection
         this.loadDevices({ site: siteId });
+        this.pushUrlState();
     }
 
     onLocationChange(e) {
@@ -327,6 +456,7 @@ class CablePatcher {
             if (siteId) {
                 this.loadDevices({ site: siteId });
             }
+            this.pushUrlState();
             return;
         }
 
@@ -339,6 +469,7 @@ class CablePatcher {
         }
 
         this.loadDevices({ location: locationId });
+        this.pushUrlState();
     }
 
     onRackChange(e) {
@@ -352,20 +483,24 @@ class CablePatcher {
             } else if (siteId) {
                 this.loadDevices({ site: siteId });
             }
+            this.pushUrlState();
             return;
         }
 
         this.loadDevices({ rack: rackId });
+        this.pushUrlState();
     }
 
     onPrimaryDeviceChange(e) {
         this.primaryDeviceId = e.target.value ? parseInt(e.target.value) : null;
         this.render();
+        this.pushUrlState();
     }
 
     onModeChange(e) {
         this.currentMode = e.target.value;
         this.render();
+        this.pushUrlState();
     }
 
     // ========== Rendering ==========
@@ -955,17 +1090,17 @@ class CablePatcher {
         }
     }
 
-    reloadCurrentView() {
+    async reloadCurrentView() {
         const rackId = document.getElementById('rack-select').value;
         const locationId = document.getElementById('location-select').value;
         const siteId = document.getElementById('site-select').value;
 
         if (rackId) {
-            this.loadDevices({ rack: rackId });
+            await this.loadDevices({ rack: rackId });
         } else if (locationId) {
-            this.loadDevices({ location: locationId });
+            await this.loadDevices({ location: locationId });
         } else if (siteId) {
-            this.loadDevices({ site: siteId });
+            await this.loadDevices({ site: siteId });
         }
     }
 

@@ -265,10 +265,6 @@
             svg: document.getElementById('patcher-svg'),
             csrfToken: csrfToken
         });
-
-        {% if selected_site %}
-        document.getElementById('site-select').value = '{{ selected_site|escapejs }}';
-        {% endif %}
     });
 </script>
 {% endblock %}
