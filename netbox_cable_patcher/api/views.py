@@ -112,7 +112,7 @@ class DevicesViewSet(ViewSet):
             return Response({'error': 'Please specify rack, location, or site'}, status=400)
 
         devices = devices.select_related('device_type', 'rack').prefetch_related(
-            'interfaces',
+            Prefetch('interfaces', queryset=Interface.objects.select_related('untagged_vlan')),
             'powerports',
             'poweroutlets',
             'frontports',

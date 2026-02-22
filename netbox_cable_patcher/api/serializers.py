@@ -55,6 +55,13 @@ class PortSerializer(serializers.Serializer):
     def get_port_type(self, obj):
         return obj.__class__.__name__
 
+    untagged_vlan_vid = serializers.SerializerMethodField()
+
+    def get_untagged_vlan_vid(self, obj):
+        if hasattr(obj, 'untagged_vlan') and obj.untagged_vlan:
+            return obj.untagged_vlan.vid
+        return None
+
 
 class DeviceWithPortsSerializer(serializers.ModelSerializer):
     interfaces = serializers.SerializerMethodField()

@@ -573,12 +573,17 @@ class CablePatcher {
             ? this.devices.find(d => d.id === this.primaryDeviceId)
             : this.devices[0];
 
-        // Filter out devices with no ports for the current mode, then sort by connections to primary
+        // Patch panel devices: have front_ports or rear_ports (shown in middle column in all modes)
+        const patchPanelDevices = this.devices
+            .filter(d => d.id !== primaryDevice?.id)
+            .filter(d => (d.front_ports || []).length > 0 || (d.rear_ports || []).length > 0)
+            .sort((a, b) => a.name.localeCompare(b.name));
+
+        // Secondary devices: exclude patch panels, filter to mode-specific ports
         const otherDevices = this.devices
             .filter(d => d.id !== primaryDevice?.id)
-            .filter(d => {
-                return portTypes.some(type => (d[type] || []).length > 0);
-            })
+            .filter(d => !patchPanelDevices.some(pp => pp.id === d.id))
+            .filter(d => portTypes.some(type => (d[type] || []).length > 0))
             .sort((a, b) => {
                 if (!primaryDevice) return 0;
                 const countCables = (device) => {
@@ -607,6 +612,23 @@ class CablePatcher {
             maxHeight = Math.max(maxHeight, height);
         }
 
+        // Compute X positions for middle (patch panels) and secondary columns
+        const hasPatchPanels = patchPanelDevices.length > 0;
+        const MIDDLE_X = this.PRIMARY_X + this.DEVICE_WIDTH + 80;
+        const effectiveSecondaryX = hasPatchPanels ? MIDDLE_X + this.DEVICE_WIDTH + 80 : this.SECONDARY_X;
+
+        // Render middle column (patch panels) — always use front_ports/rear_ports
+        this._middleDevicePositions = [];
+        let midYOffset = 20;
+        patchPanelDevices.forEach(device => {
+            const height = this.renderDevice(
+                device, MIDDLE_X, midYOffset, false, ['front_ports', 'rear_ports'], true
+            );
+            this._middleDevicePositions.push({ device, y: midYOffset, height });
+            midYOffset += height + this.DEVICE_GAP;
+            maxHeight = Math.max(maxHeight, midYOffset);
+        });
+
         // Apply user-defined device order if available
         if (this.deviceOrder.length > 0) {
             const orderMap = new Map(this.deviceOrder.map((id, i) => [id, i]));
@@ -621,14 +643,14 @@ class CablePatcher {
         this._secondaryDevicePositions = [];
         let yOffset = 20;
         otherDevices.forEach(device => {
-            const height = this.renderDevice(device, this.SECONDARY_X, yOffset, false, portTypes);
+            const height = this.renderDevice(device, effectiveSecondaryX, yOffset, false, portTypes);
             this._secondaryDevicePositions.push({ device, y: yOffset, height });
             yOffset += height + this.DEVICE_GAP;
             maxHeight = Math.max(maxHeight, yOffset);
         });
 
         // Update SVG size
-        const totalWidth = this.SECONDARY_X + this.DEVICE_WIDTH + 100;
+        const totalWidth = effectiveSecondaryX + this.DEVICE_WIDTH + 100;
         this.svg.setAttribute('width', totalWidth);
         this.svg.setAttribute('height', maxHeight + 50);
 
@@ -645,14 +667,14 @@ class CablePatcher {
                 return ['interfaces'];
             case 'power':
                 return ['power_ports', 'power_outlets'];
-            case 'patch':
-                return ['front_ports', 'rear_ports'];
+            case 'console':
+                return ['console_ports', 'console_server_ports'];
             default:
                 return ['interfaces'];
         }
     }
 
-    renderDevice(device, x, y, isPrimary, portTypes) {
+    renderDevice(device, x, y, isPrimary, portTypes, isMiddle = false) {
         const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         g.setAttribute('class', 'device' + (isPrimary ? ' primary' : ''));
         g.setAttribute('data-device-id', device.id);
@@ -706,8 +728,16 @@ class CablePatcher {
         text.textContent = device.name;
         g.appendChild(text);
 
+        // Double-click device header to open in NetBox
+        const onDeviceDblClick = (e) => {
+            e.stopPropagation();
+            window.open('/dcim/devices/' + device.id + '/', '_blank');
+        };
+        headerBg.addEventListener('dblclick', onDeviceDblClick);
+        headerCover.addEventListener('dblclick', onDeviceDblClick);
+
         // Drag handle for secondary (right-side) devices
-        if (!isPrimary) {
+        if (!isPrimary && !isMiddle) {
             headerBg.style.cursor = 'grab';
             headerCover.style.cursor = 'grab';
 
@@ -748,6 +778,19 @@ class CablePatcher {
                 } else if (port._portType === 'power_ports') {
                     portX = x + this.DEVICE_PADDING; // left edge
                 }
+            } else if (this.currentMode === 'console') {
+                if (port._portType === 'console_server_ports') {
+                    portX = x + this.DEVICE_WIDTH - this.DEVICE_PADDING; // right edge
+                } else if (port._portType === 'console_ports') {
+                    portX = x + this.DEVICE_PADDING; // left edge
+                }
+            }
+            if (isMiddle) {
+                if (port._portType === 'front_ports') {
+                    portX = x + this.DEVICE_PADDING; // left — faces primary
+                } else if (port._portType === 'rear_ports') {
+                    portX = x + this.DEVICE_WIDTH - this.DEVICE_PADDING; // right — faces secondary
+                }
             }
 
             // Store port position
@@ -779,6 +822,17 @@ class CablePatcher {
             circle.addEventListener('mouseenter', (e) => this.onPortHover(e, port, device));
             circle.addEventListener('mouseleave', () => this.hideTooltip());
             circle.addEventListener('click', (e) => this.onPortClick(e, port, device));
+            circle.addEventListener('dblclick', (e) => {
+                e.stopPropagation();
+                if (this.pendingConnection) {
+                    this.pendingConnection = null;
+                    this.container.classList.remove('connecting-mode');
+                    this.tempCableLayer.innerHTML = '';
+                    document.querySelectorAll('.port.connecting').forEach(p => p.classList.remove('connecting'));
+                }
+                const url = this.getPortUrl(port);
+                if (url) window.open(url, '_blank');
+            });
 
             g.appendChild(circle);
 
@@ -807,7 +861,9 @@ class CablePatcher {
             label.setAttribute('y', portY + 4);
             label.setAttribute('class', 'port-label');
             label.setAttribute('text-anchor', portOnRight ? 'end' : 'start');
-            label.textContent = port.name;
+            label.textContent = port.untagged_vlan_vid
+                ? `${port.name} (V${port.untagged_vlan_vid})`
+                : port.name;
             g.appendChild(label);
         });
 
@@ -881,6 +937,20 @@ class CablePatcher {
         const cp2x = x2 + (x2 < x1 ? controlOffset : -controlOffset);
 
         return `M ${x1} ${y1} C ${cp1x} ${y1}, ${cp2x} ${y2}, ${x2} ${y2}`;
+    }
+
+    getPortUrl(port) {
+        const map = {
+            Interface:         'interfaces',
+            ConsolePort:       'console-ports',
+            ConsoleServerPort: 'console-server-ports',
+            PowerPort:         'power-ports',
+            PowerOutlet:       'power-outlets',
+            FrontPort:         'front-ports',
+            RearPort:          'rear-ports',
+        };
+        const segment = map[port.port_type];
+        return segment ? `/dcim/${segment}/${port.id}/` : null;
     }
 
     // ========== Port Interaction ==========
