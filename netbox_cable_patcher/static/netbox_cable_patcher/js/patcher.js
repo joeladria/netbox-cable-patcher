@@ -573,11 +573,18 @@ class CablePatcher {
             ? this.devices.find(d => d.id === this.primaryDeviceId)
             : this.devices[0];
 
-        // Patch panel devices: have front_ports or rear_ports (shown in middle column in all modes)
-        const patchPanelDevices = this.devices
-            .filter(d => d.id !== primaryDevice?.id)
-            .filter(d => (d.front_ports || []).length > 0 || (d.rear_ports || []).length > 0)
-            .sort((a, b) => a.name.localeCompare(b.name));
+        // Patch panel devices: network mode only, and only if at least one port is cabled
+        const patchPanelDevices = this.currentMode === 'network'
+            ? this.devices
+                .filter(d => d.id !== primaryDevice?.id)
+                .filter(d => {
+                    const fps = d.front_ports || [];
+                    const rps = d.rear_ports || [];
+                    return (fps.length > 0 || rps.length > 0) &&
+                           (fps.some(p => p.cable_id) || rps.some(p => p.cable_id));
+                })
+                .sort((a, b) => a.name.localeCompare(b.name))
+            : [];
 
         // Secondary devices: exclude patch panels, filter to mode-specific ports
         const otherDevices = this.devices
@@ -681,15 +688,30 @@ class CablePatcher {
 
         // Collect all ports for this mode
         let ports = [];
-        portTypes.forEach(type => {
-            const devicePorts = device[type] || [];
-            ports = ports.concat(devicePorts.map(p => ({
-                ...p,
-                _portType: type
-            })));
-        });
+        let rowCount;
+        if (isMiddle) {
+            // Pair front_ports with rear_ports by sorted name so each pair shares a row
+            const frontPorts = [...(device.front_ports || [])]
+                .sort((a, b) => a.name.localeCompare(b.name, undefined, {numeric: true}));
+            const rearPorts = [...(device.rear_ports || [])]
+                .sort((a, b) => a.name.localeCompare(b.name, undefined, {numeric: true}));
+            rowCount = Math.max(frontPorts.length, rearPorts.length);
+            for (let i = 0; i < rowCount; i++) {
+                if (frontPorts[i]) ports.push({...frontPorts[i], _portType: 'front_ports', _rowIndex: i});
+                if (rearPorts[i]) ports.push({...rearPorts[i], _portType: 'rear_ports', _rowIndex: i});
+            }
+        } else {
+            portTypes.forEach(type => {
+                const devicePorts = device[type] || [];
+                ports = ports.concat(devicePorts.map(p => ({
+                    ...p,
+                    _portType: type
+                })));
+            });
+            rowCount = ports.length;
+        }
 
-        const deviceHeight = this.DEVICE_HEADER_HEIGHT + (ports.length * this.PORT_HEIGHT) + this.DEVICE_PADDING;
+        const deviceHeight = this.DEVICE_HEADER_HEIGHT + (rowCount * this.PORT_HEIGHT) + this.DEVICE_PADDING;
 
         // Device background
         const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
@@ -768,7 +790,8 @@ class CablePatcher {
         const defaultPortX = isPrimary ? x + this.DEVICE_WIDTH - this.DEVICE_PADDING : x + this.DEVICE_PADDING;
 
         ports.forEach((port, index) => {
-            const portY = y + this.DEVICE_HEADER_HEIGHT + (index * this.PORT_HEIGHT) + this.PORT_HEIGHT / 2;
+            const rowIndex = isMiddle ? port._rowIndex : index;
+            const portY = y + this.DEVICE_HEADER_HEIGHT + (rowIndex * this.PORT_HEIGHT) + this.PORT_HEIGHT / 2;
 
             // In power mode, determine port edge by port type
             let portX = defaultPortX;
