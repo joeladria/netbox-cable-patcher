@@ -160,6 +160,12 @@
     pointer-events: none;
 }
 
+/* Port type icons */
+.port-icon { pointer-events: none; }
+
+/* Suppress port hover/tooltips while dragging a device */
+#patcher-container.dragging-device .port { pointer-events: none; }
+
 /* Connecting mode */
 #patcher-container.connecting-mode {
     cursor: crosshair;

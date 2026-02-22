@@ -38,7 +38,7 @@ class CablePatcher {
         this.DEVICE_WIDTH = 200;
         this.DEVICE_HEADER_HEIGHT = 40;
         this.PORT_HEIGHT = 28;
-        this.PORT_RADIUS = 8;
+        this.PORT_RADIUS = 10;
         this.DEVICE_PADDING = 10;
         this.DEVICE_GAP = 50;
         this.PRIMARY_X = 50;
@@ -54,6 +54,19 @@ class CablePatcher {
             ConsolePort: '#2ecc71',
             ConsoleServerPort: '#27ae60',
             default: '#7f8c8d'
+        };
+
+        // MDI icon paths (24×24 viewBox) for each port type
+        this.PORT_ICONS = {
+            Interface:          'M7,15H9V18H11V15H13V18H15V15H17V18H19V9H15V6H9V9H5V18H7V15M4.38,3H19.63C20.94,3 22,4.06 22,5.38V19.63A2.37,2.37 0 0,1 19.63,22H4.38C3.06,22 2,20.94 2,19.63V5.38C2,4.06 3.06,3 4.38,3Z',
+            ConsolePort:        'M20,19V7H4V19H20M20,3A2,2 0 0,1 22,5V19A2,2 0 0,1 20,21H4A2,2 0 0,1 2,19V5C2,3.89 2.9,3 4,3H20M13,17V15H18V17H13M9.58,13L5.57,9H8.4L11.7,12.3C12.09,12.69 12.09,13.33 11.7,13.72L8.42,17H5.59L9.58,13Z',
+            ConsoleServerPort:  'M15,20A1,1 0 0,0 14,19H13V17H17A2,2 0 0,0 19,15V5A2,2 0 0,0 17,3H7A2,2 0 0,0 5,5V15A2,2 0 0,0 7,17H11V19H10A1,1 0 0,0 9,20H2V22H9A1,1 0 0,0 10,23H14A1,1 0 0,0 15,22H22V20H15M7,15V5H17V15H7M8,6.89L11.56,10.45L8,14H10.53L13.45,11.08C13.78,10.74 13.78,10.18 13.45,9.82L10.5,6.89H8M16,12.22H13.33V14H16V12.22Z',
+            PowerPort:          'M16 7V3H14V7H10V3H8V7C7 7 6 8 6 9V14.5L9.5 18V21H14.5V18L18 14.5V9C18 8 17 7 16 7M16 13.67L13.09 16.59L12.67 17H11.33L10.92 16.59L8 13.67V9.09C8 9.06 8.06 9 8.09 9H15.92C15.95 9 16 9.06 16 9.09V13.67Z',
+            PowerOutlet:        'M15,15H17V11H15M7,15H9V11H7M11,13H13V9H11M8.83,7H15.2L19,10.8V17H5V10.8M8,5L3,10V19H21V10L16,5H8Z',
+            FrontPort:          'M8 3H16C18.76 3 21 5.24 21 8V16C21 18.76 18.76 21 16 21H8C5.24 21 3 18.76 3 16V8C3 5.24 5.24 3 8 3Z',
+            FrontPort_uncabled: 'M8 3H16C18.76 3 21 5.24 21 8V16C21 18.76 18.76 21 16 21H8C5.24 21 3 18.76 3 16V8C3 5.24 5.24 3 8 3M8 5C6.34 5 5 6.34 5 8V16C5 17.66 6.34 19 8 19H16C17.66 19 19 17.66 19 16V8C19 6.34 17.66 5 16 5H8Z',
+            RearPort:           'M8 3H16C18.76 3 21 5.24 21 8V16C21 18.76 18.76 21 16 21H8C5.24 21 3 18.76 3 16V8C3 5.24 5.24 3 8 3Z',
+            RearPort_uncabled:  'M8 3H16C18.76 3 21 5.24 21 8V16C21 18.76 18.76 21 16 21H8C5.24 21 3 18.76 3 16V8C3 5.24 5.24 3 8 3M8 5C6.34 5 5 6.34 5 8V16C5 17.66 6.34 19 8 19H16C17.66 19 19 17.66 19 16V8C19 6.34 17.66 5 16 5H8Z',
         };
 
         // Cable colors
@@ -701,6 +714,7 @@ class CablePatcher {
             const onDragStart = (e) => {
                 // Use a threshold to distinguish clicks from drags
                 const svgPt = this.svgPoint(e);
+                if (!svgPt) return;
                 this.draggingDevice = {
                     deviceId: device.id,
                     group: g,
@@ -708,6 +722,7 @@ class CablePatcher {
                     origTranslateY: 0,
                     moved: false
                 };
+                this.container.classList.add('dragging-device');
                 headerBg.style.cursor = 'grabbing';
                 headerCover.style.cursor = 'grabbing';
                 e.preventDefault();
@@ -766,6 +781,23 @@ class CablePatcher {
             circle.addEventListener('click', (e) => this.onPortClick(e, port, device));
 
             g.appendChild(circle);
+
+            // Port type icon inside the port circle
+            const iconKey = (port.port_type === 'FrontPort' || port.port_type === 'RearPort')
+                ? (port.cable_id ? port.port_type : port.port_type + '_uncabled')
+                : port.port_type;
+            const iconPath = this.PORT_ICONS[iconKey];
+            if (iconPath) {
+                const iconSize = this.PORT_RADIUS * 1.5;
+                const iconScale = iconSize / 24;
+                const icon = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                icon.setAttribute('d', iconPath);
+                icon.setAttribute('transform',
+                    `translate(${portX - iconSize / 2}, ${portY - iconSize / 2}) scale(${iconScale})`);
+                icon.setAttribute('class', 'port-icon');
+                icon.style.fill = port.cable_id ? '#ffffff' : color;
+                g.appendChild(icon);
+            }
 
             // Port label — position based on which edge the port is on
             const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -1084,13 +1116,16 @@ class CablePatcher {
         const pt = this.svg.createSVGPoint();
         pt.x = e.clientX;
         pt.y = e.clientY;
-        return pt.matrixTransform(this.svg.getScreenCTM().inverse());
+        const ctm = this.svg.getScreenCTM();
+        if (!ctm) return null;
+        return pt.matrixTransform(ctm.inverse());
     }
 
     onDeviceDrag(e) {
         if (!this.draggingDevice) return;
 
         const svgPt = this.svgPoint(e);
+        if (!svgPt) return;
         const dy = svgPt.y - this.draggingDevice.startY;
 
         // Movement threshold to distinguish from click
@@ -1108,6 +1143,7 @@ class CablePatcher {
 
         const drag = this.draggingDevice;
         this.draggingDevice = null;
+        this.container.classList.remove('dragging-device');
 
         // Reset visual state
         drag.group.removeAttribute('transform');
@@ -1117,6 +1153,7 @@ class CablePatcher {
 
         // Determine new order based on drop position
         const svgPt = this.svgPoint(e);
+        if (!svgPt) { this.render(); return; }
         const positions = this._secondaryDevicePositions || [];
         if (positions.length === 0) return;
 
@@ -1127,8 +1164,8 @@ class CablePatcher {
         const draggedPos = positions[draggedIdx];
         const draggedCenter = draggedPos.y + draggedPos.height / 2 + (svgPt.y - drag.startY);
 
-        // Find target index
-        let targetIdx = positions.length - 1;
+        // Find target index (default to end so drop below all → last position)
+        let targetIdx = positions.length;
         for (let i = 0; i < positions.length; i++) {
             const mid = positions[i].y + positions[i].height / 2;
             if (draggedCenter < mid) {
@@ -1443,8 +1480,13 @@ class CablePatcher {
 
     applyZoom() {
         const scroll = document.getElementById('patcher-scroll');
-        scroll.style.transform = `scale(${this.zoom})`;
-        scroll.style.transformOrigin = 'top left';
+        scroll.style.transform = '';
+        scroll.style.transformOrigin = '';
+        const w = parseFloat(this.svg.getAttribute('width')) || 800;
+        const h = parseFloat(this.svg.getAttribute('height')) || 600;
+        this.svg.setAttribute('viewBox', `0 0 ${w / this.zoom} ${h / this.zoom}`);
+        this.svg.style.width = w + 'px';
+        this.svg.style.height = h + 'px';
     }
 }
 
