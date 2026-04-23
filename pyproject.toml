@@ -13,7 +13,7 @@ authors = [
 ]
 description = "NetBox plugin providing a visual patch bay interface for managing cable connections."
 readme = "README.md"
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
 
 classifiers=[
     'Development Status :: 3 - Alpha',
@@ -45,6 +45,9 @@ Tracker = "https://github.com/netbox-community/netbox-cable-patcher/issues"
 [tool.black]
 line-length = 120
 target_version = ['py39', 'py310', 'py311', 'py312']
+
+[tool.setuptools.packages.find]
+include = ["netbox_cable_patcher*"]
 
 [tool.setuptools.package-data]
 netbox_cable_patcher = ["templates/**", "static/**"]
