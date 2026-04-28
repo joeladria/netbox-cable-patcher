@@ -81,7 +81,9 @@ class DeviceWithPortsSerializer(serializers.ModelSerializer):
         ]
 
     def get_interfaces(self, obj):
-        return PortSerializer(obj.interfaces.all(), many=True).data
+        # Exclude non-physical interface types (virtual, lag, bridge)
+        qs = obj.interfaces.exclude(type__in=['virtual', 'lag', 'bridge'])
+        return PortSerializer(qs, many=True).data
 
     def get_power_ports(self, obj):
         return PortSerializer(obj.powerports.all(), many=True).data

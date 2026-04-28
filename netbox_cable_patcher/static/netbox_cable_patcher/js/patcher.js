@@ -546,6 +546,13 @@ class CablePatcher {
         this.renderChips();
         await this.loadCablesAndRender();
         this.pushUrlState();
+
+        // Keep the dropdown open so the user can keep adding devices without re-clicking
+        const ts = select.tomselect;
+        if (ts) {
+            ts.clear(true); // silent clear — does not fire the change event
+            ts.open();
+        }
     }
 
     async onAddAllDevices(side) {
@@ -755,8 +762,8 @@ class CablePatcher {
         portTypes.forEach(type => {
             (device[type] || []).forEach(p => {
                 if (type === 'interfaces') {
-                    const typeVal = typeof p.type === 'object' ? p.type?.value : p.type;
-                    if (typeVal === 'virtual' || typeVal === 'lag') return;
+                    const typeVal = (typeof p.type === 'object' ? p.type?.value : p.type || '').toLowerCase();
+                    if (typeVal === 'virtual' || typeVal === 'lag' || typeVal === 'bridge') return;
                 }
                 ports.push({ ...p, _portType: type });
             });
@@ -926,16 +933,33 @@ class CablePatcher {
         const aPos = this.portPositions[aKey];
         const bPos = this.portPositions[bKey];
 
-        if (!aPos || !bPos) return;
+        let color = cable.color || this.CABLE_COLORS[cable.type] || this.CABLE_COLORS.default;
+        if (color && !color.startsWith('#')) color = '#' + color;
 
+        // Neither endpoint is on the canvas — nothing to show
+        if (!aPos && !bPos) return;
+
+        // Both endpoints on canvas but same side → draw stubs from each
+        if (aPos && bPos && aPos.side === bPos.side) {
+            this.renderStub(aPos, color, cable);
+            this.renderStub(bPos, color, cable);
+            return;
+        }
+
+        // Only one endpoint on canvas → draw a stub from the visible one
+        if (!aPos || !bPos) {
+            const visiblePos = aPos || bPos;
+            this.renderStub(visiblePos, color, cable);
+            return;
+        }
+
+        // Normal case: both endpoints on opposite sides → draw bezier cable
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         const d = this.calculateCablePath(aPos.x, aPos.y, bPos.x, bPos.y);
         path.setAttribute('d', d);
         path.setAttribute('class', 'cable');
         path.setAttribute('data-cable-id', cable.id);
 
-        let color = cable.color || this.CABLE_COLORS[cable.type] || this.CABLE_COLORS.default;
-        if (color && !color.startsWith('#')) color = '#' + color;
         path.style.stroke = color;
 
         if (cable.status === 'planned') path.classList.add('planned');
@@ -947,6 +971,51 @@ class CablePatcher {
         });
 
         this.cablesLayer.appendChild(path);
+    }
+
+    /**
+     * Render a short dotted stub arrow extending outward from a port,
+     * used when a cable's other endpoint is off-screen or on the same side.
+     * Left-side ports stub extends rightward; right-side ports stub extends leftward.
+     */
+    renderStub(pos, color, cable) {
+        const STUB_LENGTH = 38;
+        const ARROW_SIZE = 6;
+
+        // Direction: left-side ports point right (+1), right-side ports point left (-1)
+        const dir = pos.side === 'left' ? 1 : -1;
+
+        const x1 = pos.x;
+        const y1 = pos.y;
+        const x2 = pos.x + dir * STUB_LENGTH;
+        const y2 = pos.y;
+
+        // Dotted line
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', x1);
+        line.setAttribute('y1', y1);
+        line.setAttribute('x2', x2);
+        line.setAttribute('y2', y2);
+        line.setAttribute('class', 'cable-stub');
+        line.style.stroke = color;
+
+        // Arrowhead pointing in stub direction
+        // Triangle tip at x2, base at x2 - dir*ARROW_SIZE
+        const ax = x2;
+        const ay = y2;
+        const points = [
+            `${ax},${ay}`,
+            `${ax - dir * ARROW_SIZE},${ay - ARROW_SIZE / 2}`,
+            `${ax - dir * ARROW_SIZE},${ay + ARROW_SIZE / 2}`
+        ].join(' ');
+
+        const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+        arrow.setAttribute('points', points);
+        arrow.setAttribute('class', 'cable-stub-arrow');
+        arrow.style.fill = color;
+
+        this.cablesLayer.appendChild(line);
+        this.cablesLayer.appendChild(arrow);
     }
 
     calculateCablePath(x1, y1, x2, y2) {

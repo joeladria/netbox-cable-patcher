@@ -323,6 +323,21 @@
     pointer-events: none;
 }
 
+/* Off-screen / same-side cable stubs */
+.cable-stub {
+    fill: none;
+    stroke-width: 2;
+    stroke-dasharray: 4 3;
+    stroke-linecap: round;
+    opacity: 0.32;
+    pointer-events: none;
+}
+
+.cable-stub-arrow {
+    opacity: 0.32;
+    pointer-events: none;
+}
+
 #temp-cable-layer {
     pointer-events: none;
 }
