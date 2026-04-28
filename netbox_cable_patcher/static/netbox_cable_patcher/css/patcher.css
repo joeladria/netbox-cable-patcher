@@ -29,12 +29,27 @@
     font-size: 14px;
 }
 
+/* Horizontal body: select on the left, chips filling the rest */
+.device-panel-selector__body {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.device-panel-selector__body .device-listbox {
+    flex: 0 0 auto;
+    width: 220px;
+    min-width: 160px;
+}
+
 /* Device chips */
 .device-chips {
     display: flex;
     flex-wrap: wrap;
+    align-content: flex-start;
     gap: 6px;
-    min-height: 24px;
+    min-height: 34px;
+    flex: 1 1 0;
 }
 
 .device-chip {

@@ -231,6 +231,13 @@ class CablePatcher {
         addListener('left-device-select', 'change', () => this.onAddDevice('left'));
         addListener('right-device-select', 'change', () => this.onAddDevice('right'));
 
+        // Add-all buttons
+        addListener('add-all-left-btn', 'click', () => this.onAddAllDevices('left'));
+        addListener('add-all-right-btn', 'click', () => this.onAddAllDevices('right'));
+
+        // Clear all devices
+        addListener('clear-all-btn', 'click', () => this.clearAllDevices());
+
         // Mode switches
         document.querySelectorAll('input[name="mode"]').forEach(radio => {
             radio.addEventListener('change', (e) => this.onModeChange(e));
@@ -393,12 +400,12 @@ class CablePatcher {
             this.populateSelect('left-device-select', options, 'Select device to add...', options.length === 0);
             this.populateSelect('right-device-select', options, 'Select device to add...', options.length === 0);
 
-            // Enable/disable add buttons
+            // Enable/disable add-all buttons
             const hasDevices = options.length > 0;
-            const addLeftBtn = document.getElementById('add-left-btn');
-            const addRightBtn = document.getElementById('add-right-btn');
-            if (addLeftBtn) addLeftBtn.disabled = !hasDevices;
-            if (addRightBtn) addRightBtn.disabled = !hasDevices;
+            const addAllLeftBtn = document.getElementById('add-all-left-btn');
+            const addAllRightBtn = document.getElementById('add-all-right-btn');
+            if (addAllLeftBtn) addAllLeftBtn.disabled = !hasDevices;
+            if (addAllRightBtn) addAllRightBtn.disabled = !hasDevices;
 
         } catch (error) {
             console.error('Failed to load devices:', error);
@@ -451,10 +458,10 @@ class CablePatcher {
         if (!siteId) {
             this.populateSelect('left-device-select', [], 'Select device to add...', true);
             this.populateSelect('right-device-select', [], 'Select device to add...', true);
-            const addLeftBtn = document.getElementById('add-left-btn');
-            const addRightBtn = document.getElementById('add-right-btn');
-            if (addLeftBtn) addLeftBtn.disabled = true;
-            if (addRightBtn) addRightBtn.disabled = true;
+            const addAllLeftBtn = document.getElementById('add-all-left-btn');
+            const addAllRightBtn = document.getElementById('add-all-right-btn');
+            if (addAllLeftBtn) addAllLeftBtn.disabled = true;
+            if (addAllRightBtn) addAllRightBtn.disabled = true;
             this.pushUrlState();
             return;
         }
@@ -538,6 +545,30 @@ class CablePatcher {
 
         this.renderChips();
         await this.loadCablesAndRender();
+        this.pushUrlState();
+    }
+
+    async onAddAllDevices(side) {
+        const usedIds = new Set([...this.leftDeviceIds, ...this.rightDeviceIds]);
+        const idList = side === 'left' ? this.leftDeviceIds : this.rightDeviceIds;
+
+        const toAdd = this.availableDevices.filter(d => !usedIds.has(d.id));
+        if (toAdd.length === 0) return;
+
+        toAdd.forEach(d => idList.push(d.id));
+
+        this.renderChips();
+        await this.loadCablesAndRender();
+        this.pushUrlState();
+    }
+
+    clearAllDevices() {
+        if (this.leftDeviceIds.length === 0 && this.rightDeviceIds.length === 0) return;
+        this.leftDeviceIds = [];
+        this.rightDeviceIds = [];
+        this.cables = [];
+        this.renderChips();
+        this.render();
         this.pushUrlState();
     }
 

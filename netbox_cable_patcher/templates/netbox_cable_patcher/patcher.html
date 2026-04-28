@@ -77,12 +77,15 @@
                                         Left Devices
                                         <small class="text-muted">(ports face right)</small>
                                     </span>
+                                    <button type="button" class="btn btn-sm btn-outline-primary ms-auto" id="add-all-left-btn" disabled title="Add all remaining devices to Left">
+                                        All <i class="mdi mdi-arrow-right"></i>
+                                    </button>
                                 </div>
-                                <div class="device-panel-selector__controls mt-2">
-                                    <select id="left-device-select" class="form-control device-listbox" size="5" disabled>
+                                <div class="device-panel-selector__body mt-2">
+                                    <select id="left-device-select" class="form-control device-listbox" disabled>
                                     </select>
+                                    <div id="left-device-chips" class="device-chips"></div>
                                 </div>
-                                <div id="left-device-chips" class="device-chips mt-2"></div>
                             </div>
                         </div>
 
@@ -95,12 +98,15 @@
                                         Right Devices
                                         <small class="text-muted">(ports face left)</small>
                                     </span>
+                                    <button type="button" class="btn btn-sm btn-outline-success ms-auto" id="add-all-right-btn" disabled title="Add all remaining devices to Right">
+                                        <i class="mdi mdi-arrow-left"></i> All
+                                    </button>
                                 </div>
-                                <div class="device-panel-selector__controls mt-2">
-                                    <select id="right-device-select" class="form-control device-listbox" size="5" disabled>
+                                <div class="device-panel-selector__body mt-2">
+                                    <select id="right-device-select" class="form-control device-listbox" disabled>
                                     </select>
+                                    <div id="right-device-chips" class="device-chips"></div>
                                 </div>
-                                <div id="right-device-chips" class="device-chips mt-2"></div>
                             </div>
                         </div>
                     </div>
@@ -117,16 +123,21 @@
                     <h5 class="mb-0">
                         <i class="mdi mdi-cable-data"></i> Patch Bay View
                     </h5>
-                    <div class="btn-group btn-group-sm">
-                        <button type="button" class="btn btn-outline-secondary" id="zoom-in" title="Zoom In">
-                            <i class="mdi mdi-magnify-plus"></i>
+                    <div class="d-flex align-items-center gap-2">
+                        <button type="button" class="btn btn-sm btn-outline-danger" id="clear-all-btn" title="Clear all devices">
+                            <i class="mdi mdi-close-circle"></i> Clear
                         </button>
-                        <button type="button" class="btn btn-outline-secondary" id="zoom-reset" title="Reset Zoom">
-                            <i class="mdi mdi-magnify"></i> 100%
-                        </button>
-                        <button type="button" class="btn btn-outline-secondary" id="zoom-out" title="Zoom Out">
-                            <i class="mdi mdi-magnify-minus"></i>
-                        </button>
+                        <div class="btn-group btn-group-sm">
+                            <button type="button" class="btn btn-outline-secondary" id="zoom-in" title="Zoom In">
+                                <i class="mdi mdi-magnify-plus"></i>
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary" id="zoom-reset" title="Reset Zoom">
+                                <i class="mdi mdi-magnify"></i> 100%
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary" id="zoom-out" title="Zoom Out">
+                                <i class="mdi mdi-magnify-minus"></i>
+                            </button>
+                        </div>
                     </div>
                 </div>
                 <div class="card-body p-0">
