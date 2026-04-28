@@ -536,9 +536,6 @@ class CablePatcher {
 
         idList.push(deviceId);
 
-        // Reset the dropdown
-        this.setSelectValue(selectId, '');
-
         this.renderChips();
         await this.loadCablesAndRender();
         this.pushUrlState();
@@ -571,15 +568,42 @@ class CablePatcher {
     }
 
     /**
-     * Rebuild both device dropdowns excluding devices already placed on either side.
+     * Surgically remove/restore options in both device dropdowns based on which
+     * devices are already placed on either side — without closing TomSelect.
      */
     _refreshDeviceDropdowns() {
         const usedIds = new Set([...this.leftDeviceIds, ...this.rightDeviceIds]);
-        const available = this.availableDevices.filter(d => !usedIds.has(d.id));
-        const options = available.map(d => ({ value: d.id, text: d.name }));
-        const empty = options.length === 0;
-        this.populateSelect('left-device-select', options, '— Select device to add to left —', empty);
-        this.populateSelect('right-device-select', options, '— Select device to add to right —', empty);
+
+        ['left-device-select', 'right-device-select'].forEach(selectId => {
+            const select = document.getElementById(selectId);
+            if (!select) return;
+
+            const ts = select.tomselect;
+            if (ts) {
+                // TomSelect: add back any devices that are no longer used,
+                // remove any devices that are now used — without clearing all options.
+                this.availableDevices.forEach(d => {
+                    if (usedIds.has(d.id)) {
+                        ts.removeOption(String(d.id));
+                    } else {
+                        // addOption is a no-op if the option already exists
+                        ts.addOption({ value: d.id, text: d.name });
+                    }
+                });
+                ts.refreshOptions(false);
+            } else {
+                // Native <select>: update disabled attribute per option
+                Array.from(select.options).forEach(opt => {
+                    if (!opt.value) return; // skip placeholder
+                    const id = parseInt(opt.value);
+                    opt.disabled = usedIds.has(id);
+                    opt.hidden = usedIds.has(id);
+                });
+                // Disable the whole select if nothing is available
+                const anyAvailable = this.availableDevices.some(d => !usedIds.has(d.id));
+                select.disabled = !anyAvailable;
+            }
+        });
     }
 
     _renderChipList(side, deviceIds, container) {
@@ -695,10 +719,16 @@ class CablePatcher {
         g.setAttribute('class', 'device device--' + side);
         g.setAttribute('data-device-id', device.id);
 
-        // Collect ports
+        // Collect ports — exclude virtual interfaces (no physical connector)
         let ports = [];
         portTypes.forEach(type => {
-            (device[type] || []).forEach(p => ports.push({ ...p, _portType: type }));
+            (device[type] || []).forEach(p => {
+                if (type === 'interfaces') {
+                    const typeVal = typeof p.type === 'object' ? p.type?.value : p.type;
+                    if (typeVal === 'virtual' || typeVal === 'lag') return;
+                }
+                ports.push({ ...p, _portType: type });
+            });
         });
 
         const rowCount = ports.length;
