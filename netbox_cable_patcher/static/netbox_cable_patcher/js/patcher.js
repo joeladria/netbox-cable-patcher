@@ -438,6 +438,35 @@ class CablePatcher {
         this.render();
     }
 
+    /**
+     * Reload both device port data AND cables, then re-render.
+     * Must be called after any cable create/delete so that port cable_id
+     * fields (which live on the device objects) are up to date.
+     */
+    async reloadAll() {
+        const rackId     = document.getElementById('rack-select')?.value;
+        const locationId = document.getElementById('location-select')?.value;
+        const siteId     = document.getElementById('site-select')?.value;
+
+        const params = {};
+        if (rackId)          params.rack      = rackId;
+        else if (locationId) params.location  = locationId;
+        else if (siteId)     params.site      = siteId;
+
+        if (Object.keys(params).length > 0) {
+            // Re-fetch device data (updates port cable_id / connected_endpoint)
+            // but preserve the current left/right device ID lists.
+            const savedLeft  = [...this.leftDeviceIds];
+            const savedRight = [...this.rightDeviceIds];
+            await this.loadAvailableDevices(params);
+            this.leftDeviceIds  = savedLeft.filter(id => this.availableDevices.some(d => d.id === id));
+            this.rightDeviceIds = savedRight.filter(id => this.availableDevices.some(d => d.id === id));
+            this.renderChips();
+        }
+
+        await this.loadCablesAndRender();
+    }
+
     // ========== Event Handlers ==========
 
     onSiteChange(e) {
@@ -1093,6 +1122,23 @@ class CablePatcher {
         this.completeConnection(port, device);
     }
 
+    // Map of which port types can connect to which other port types.
+    // Must stay in sync with COMPATIBLE_TERMINATION_TYPES in serializers.py.
+    static COMPATIBLE_TERMINATION_TYPES = {
+        Interface:         new Set(['Interface', 'FrontPort', 'RearPort']),
+        FrontPort:         new Set(['Interface', 'FrontPort', 'RearPort', 'ConsolePort', 'ConsoleServerPort']),
+        RearPort:          new Set(['Interface', 'FrontPort', 'RearPort', 'ConsolePort', 'ConsoleServerPort']),
+        ConsolePort:       new Set(['ConsoleServerPort', 'FrontPort', 'RearPort']),
+        ConsoleServerPort: new Set(['ConsolePort', 'FrontPort', 'RearPort']),
+        PowerPort:         new Set(['PowerOutlet']),
+        PowerOutlet:       new Set(['PowerPort']),
+    };
+
+    isCompatiblePort(sourceType, targetType) {
+        const allowed = CablePatcher.COMPATIBLE_TERMINATION_TYPES[sourceType];
+        return allowed ? allowed.has(targetType) : false;
+    }
+
     startConnection(port, device) {
         this.pendingConnection = { port, device, type: port.port_type };
 
@@ -1101,11 +1147,35 @@ class CablePatcher {
         );
         if (portElement) portElement.classList.add('connecting');
         this.container.classList.add('connecting-mode');
+
+        // Dim all ports that are incompatible with the source port type
+        document.querySelectorAll('circle.port:not(.connected)').forEach(circle => {
+            const targetType = circle.getAttribute('data-port-type');
+            const targetId = parseInt(circle.getAttribute('data-port-id'));
+            // Skip the source port itself
+            if (targetType === port.port_type && targetId === port.id) return;
+            if (!this.isCompatiblePort(port.port_type, targetType)) {
+                circle.classList.add('incompatible');
+            }
+        });
     }
 
     completeConnection(port, device) {
         if (port.id === this.pendingConnection.port.id &&
             port.port_type === this.pendingConnection.type) {
+            this.cancelPendingConnection();
+            return;
+        }
+
+        // Client-side compatibility guard (mirrors server-side validation)
+        if (!this.isCompatiblePort(this.pendingConnection.type, port.port_type)) {
+            const allowed = Array.from(
+                CablePatcher.COMPATIBLE_TERMINATION_TYPES[this.pendingConnection.type] || []
+            ).sort().join(', ');
+            this.showError(
+                `Cannot connect a ${this.pendingConnection.type} to a ${port.port_type}. ` +
+                `Allowed target types: ${allowed}.`
+            );
             this.cancelPendingConnection();
             return;
         }
@@ -1179,6 +1249,8 @@ class CablePatcher {
             `circle[data-port-type="${this.pendingConnection.type}"][data-port-id="${this.pendingConnection.port.id}"]`
         );
         if (portElement) portElement.classList.remove('connecting');
+        // Remove incompatibility dimming from all ports
+        document.querySelectorAll('circle.port.incompatible').forEach(c => c.classList.remove('incompatible'));
         this.pendingConnection = null;
         this.container.classList.remove('connecting-mode');
         this.tempCableLayer.innerHTML = '';
@@ -1392,7 +1464,7 @@ class CablePatcher {
             document.getElementById('cable-color-input').value = '#000000';
             document.getElementById('cable-label-input').value = '';
             this._pendingCableData = null;
-            await this.loadCablesAndRender();
+            await this.reloadAll();
         } catch (error) {
             alert('Failed to create cable: ' + error.message);
         }
@@ -1404,9 +1476,8 @@ class CablePatcher {
         if (!confirm('Are you sure you want to delete this cable?')) return;
         try {
             await this.apiDelete(`cables/${this.selectedCable.id}/`);
-            this.cables = this.cables.filter(c => c.id !== this.selectedCable.id);
             this.closeCablePanel();
-            await this.loadCablesAndRender();
+            await this.reloadAll();
         } catch (error) {
             alert('Failed to delete cable: ' + error.message);
         }
@@ -1420,10 +1491,9 @@ class CablePatcher {
             const ids = this.selectedCables.map(c => c.id);
             for (const id of ids) {
                 await this.apiDelete(`cables/${id}/`);
-                this.cables = this.cables.filter(c => c.id !== id);
             }
             this.closeCablePanel();
-            await this.loadCablesAndRender();
+            await this.reloadAll();
         } catch (error) {
             alert('Failed to delete cables: ' + error.message);
         }

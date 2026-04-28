@@ -353,9 +353,16 @@
     cursor: crosshair;
 }
 
-#patcher-container.connecting-mode .port:not(.connected):not(.connecting):hover {
+#patcher-container.connecting-mode .port:not(.connected):not(.connecting):not(.incompatible):hover {
     stroke-width: 4;
     filter: drop-shadow(0 0 8px #28a745);
+}
+
+/* Incompatible ports — dimmed and non-interactive during a pending connection */
+.port.incompatible {
+    opacity: 0.2;
+    cursor: not-allowed;
+    pointer-events: none;
 }
 
 /* Port tooltip */

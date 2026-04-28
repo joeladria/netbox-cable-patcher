@@ -1,4 +1,6 @@
 from django.contrib.contenttypes.models import ContentType
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import transaction
 from django.db.models import Prefetch
 from rest_framework import status
 from rest_framework.decorators import action
@@ -223,34 +225,52 @@ class CablesViewSet(ViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Create the cable
-        cable = Cable(
-            type=data.get('type', ''),
-            status=data.get('status', LinkStatusChoices.STATUS_CONNECTED),
-            color=data.get('color', ''),
-            label=data.get('label', ''),
-        )
-        cable.save()
+        try:
+            with transaction.atomic():
+                # Create the cable
+                cable = Cable(
+                    type=data.get('type', ''),
+                    status=data.get('status', LinkStatusChoices.STATUS_CONNECTED),
+                    color=data.get('color', ''),
+                    label=data.get('label', ''),
+                )
+                cable.save()
 
-        # Create terminations
-        a_ct = ContentType.objects.get_for_model(a_model)
-        b_ct = ContentType.objects.get_for_model(b_model)
+                # Create terminations
+                a_ct = ContentType.objects.get_for_model(a_model)
+                b_ct = ContentType.objects.get_for_model(b_model)
 
-        CableTermination.objects.create(
-            cable=cable,
-            cable_end='A',
-            termination_type=a_ct,
-            termination_id=a_term.id
-        )
-        CableTermination.objects.create(
-            cable=cable,
-            cable_end='B',
-            termination_type=b_ct,
-            termination_id=b_term.id
-        )
+                CableTermination.objects.create(
+                    cable=cable,
+                    cable_end='A',
+                    termination_type=a_ct,
+                    termination_id=a_term.id
+                )
+                CableTermination.objects.create(
+                    cable=cable,
+                    cable_end='B',
+                    termination_type=b_ct,
+                    termination_id=b_term.id
+                )
 
-        # Refresh to get the terminations
-        cable.refresh_from_db()
+                # Refresh so the cable instance knows about its terminations,
+                # then run NetBox's own model-level validation (compatibility
+                # checks, same-device restrictions, etc.).
+                cable.refresh_from_db()
+                cable.full_clean()
+
+        except DjangoValidationError as exc:
+            # Flatten the error messages from Django's ValidationError
+            messages = []
+            if hasattr(exc, 'message_dict'):
+                for field, errs in exc.message_dict.items():
+                    messages.extend(errs)
+            else:
+                messages = list(exc.messages)
+            return Response(
+                {'error': ' '.join(messages)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         return Response(CableSerializer(cable).data, status=status.HTTP_201_CREATED)
 

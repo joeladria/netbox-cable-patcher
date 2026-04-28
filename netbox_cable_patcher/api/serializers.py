@@ -139,6 +139,19 @@ class CableSerializer(serializers.ModelSerializer):
         return result
 
 
+# Defines which port types may be connected to which other port types.
+# This mirrors NetBox's own cable termination compatibility rules.
+COMPATIBLE_TERMINATION_TYPES = {
+    'Interface':         {'Interface', 'FrontPort', 'RearPort'},
+    'FrontPort':         {'Interface', 'FrontPort', 'RearPort', 'ConsolePort', 'ConsoleServerPort'},
+    'RearPort':          {'Interface', 'FrontPort', 'RearPort', 'ConsolePort', 'ConsoleServerPort'},
+    'ConsolePort':       {'ConsoleServerPort', 'FrontPort', 'RearPort'},
+    'ConsoleServerPort': {'ConsolePort', 'FrontPort', 'RearPort'},
+    'PowerPort':         {'PowerOutlet'},
+    'PowerOutlet':       {'PowerPort'},
+}
+
+
 class CableCreateSerializer(serializers.Serializer):
     """Serializer for creating cables via the patcher interface."""
     a_termination_type = serializers.CharField()
@@ -149,3 +162,27 @@ class CableCreateSerializer(serializers.Serializer):
     status = serializers.CharField(default='connected')
     color = serializers.CharField(required=False, allow_blank=True)
     label = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, data):
+        a_type = data.get('a_termination_type')
+        b_type = data.get('b_termination_type')
+
+        valid_types = set(COMPATIBLE_TERMINATION_TYPES.keys())
+
+        if a_type not in valid_types:
+            raise serializers.ValidationError(
+                {'a_termination_type': f'Invalid termination type: {a_type}'}
+            )
+        if b_type not in valid_types:
+            raise serializers.ValidationError(
+                {'b_termination_type': f'Invalid termination type: {b_type}'}
+            )
+
+        allowed_b_types = COMPATIBLE_TERMINATION_TYPES.get(a_type, set())
+        if b_type not in allowed_b_types:
+            raise serializers.ValidationError(
+                f'Cannot connect a {a_type} to a {b_type}. '
+                f'A {a_type} may only connect to: {", ".join(sorted(allowed_b_types))}.'
+            )
+
+        return data
