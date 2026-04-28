@@ -438,35 +438,6 @@ class CablePatcher {
         this.render();
     }
 
-    /**
-     * Reload both device port data AND cables, then re-render.
-     * Must be called after any cable create/delete so that port cable_id
-     * fields (which live on the device objects) are up to date.
-     */
-    async reloadAll() {
-        const rackId     = document.getElementById('rack-select')?.value;
-        const locationId = document.getElementById('location-select')?.value;
-        const siteId     = document.getElementById('site-select')?.value;
-
-        const params = {};
-        if (rackId)          params.rack      = rackId;
-        else if (locationId) params.location  = locationId;
-        else if (siteId)     params.site      = siteId;
-
-        if (Object.keys(params).length > 0) {
-            // Re-fetch device data (updates port cable_id / connected_endpoint)
-            // but preserve the current left/right device ID lists.
-            const savedLeft  = [...this.leftDeviceIds];
-            const savedRight = [...this.rightDeviceIds];
-            await this.loadAvailableDevices(params);
-            this.leftDeviceIds  = savedLeft.filter(id => this.availableDevices.some(d => d.id === id));
-            this.rightDeviceIds = savedRight.filter(id => this.availableDevices.some(d => d.id === id));
-            this.renderChips();
-        }
-
-        await this.loadCablesAndRender();
-    }
-
     // ========== Event Handlers ==========
 
     onSiteChange(e) {
@@ -1464,7 +1435,7 @@ class CablePatcher {
             document.getElementById('cable-color-input').value = '#000000';
             document.getElementById('cable-label-input').value = '';
             this._pendingCableData = null;
-            await this.reloadAll();
+            await this.loadCablesAndRender();
         } catch (error) {
             alert('Failed to create cable: ' + error.message);
         }
@@ -1476,8 +1447,9 @@ class CablePatcher {
         if (!confirm('Are you sure you want to delete this cable?')) return;
         try {
             await this.apiDelete(`cables/${this.selectedCable.id}/`);
+            this.cables = this.cables.filter(c => c.id !== this.selectedCable.id);
             this.closeCablePanel();
-            await this.reloadAll();
+            await this.loadCablesAndRender();
         } catch (error) {
             alert('Failed to delete cable: ' + error.message);
         }
@@ -1491,9 +1463,10 @@ class CablePatcher {
             const ids = this.selectedCables.map(c => c.id);
             for (const id of ids) {
                 await this.apiDelete(`cables/${id}/`);
+                this.cables = this.cables.filter(c => c.id !== id);
             }
             this.closeCablePanel();
-            await this.reloadAll();
+            await this.loadCablesAndRender();
         } catch (error) {
             alert('Failed to delete cables: ' + error.message);
         }
