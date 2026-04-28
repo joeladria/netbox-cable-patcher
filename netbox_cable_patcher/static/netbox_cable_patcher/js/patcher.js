@@ -1,5 +1,7 @@
 /**
  * Cable Patcher - Interactive SVG-based patch bay visualization
+ * Left/Right device panel model: user independently adds devices to left or right.
+ * Left devices render with ports on the right edge; right devices with ports on the left edge.
  */
 
 class CablePatcher {
@@ -7,27 +9,33 @@ class CablePatcher {
         this.container = options.container;
         this.svg = options.svg;
         this.csrfToken = options.csrfToken;
-        // Use a relative plugin API path so requests are made to the plugin's
-        // endpoints (e.g. '<plugin-url>/api/locations'). A leading slash would
-        // target the global NetBox API instead.
         this.apiBase = 'api/';
 
-        // State
+        // Location data (sites → locations → racks)
         this.locations = [];
-        this.devices = [];
+
+        // All devices available for the current site/location/rack filter
+        this.availableDevices = [];
+
+        // Left/right panel device ID lists (user-curated)
+        this.leftDeviceIds = [];
+        this.rightDeviceIds = [];
+
+        // Cables for the currently visible devices
         this.cables = [];
-        this.primaryDeviceId = null;
+
         this.currentMode = 'network';
         this.zoom = 1;
         this.selectedCable = null;
         this.selectedCables = [];
         this.pendingConnection = null;
 
-        // Drag state for device reordering
+        // Drag state for device reordering within a column
         this.draggingDevice = null;
-        this.dragStartY = 0;
-        this.dragOffsetY = 0;
-        this.deviceOrder = []; // stores ordered secondary device IDs
+
+        // Track device positions for drag-reorder
+        this._leftDevicePositions = [];
+        this._rightDevicePositions = [];
 
         // SVG layers
         this.cablesLayer = document.getElementById('cables-layer');
@@ -35,14 +43,14 @@ class CablePatcher {
         this.tempCableLayer = document.getElementById('temp-cable-layer');
 
         // Layout constants
-        this.DEVICE_WIDTH = 200;
+        this.DEVICE_WIDTH = 220;
         this.DEVICE_HEADER_HEIGHT = 40;
         this.PORT_HEIGHT = 28;
         this.PORT_RADIUS = 10;
-        this.DEVICE_PADDING = 10;
-        this.DEVICE_GAP = 50;
-        this.PRIMARY_X = 50;
-        this.SECONDARY_X = 400;
+        this.DEVICE_PADDING = 12;
+        this.DEVICE_GAP = 30;
+        this.LEFT_X = 20;
+        this.CENTER_GAP = 160; // horizontal space between left column's right edge and right column's left edge
 
         // Port colors by type
         this.PORT_COLORS = {
@@ -56,7 +64,7 @@ class CablePatcher {
             default: '#7f8c8d'
         };
 
-        // MDI icon paths (24×24 viewBox) for each port type
+        // MDI icon paths (24x24 viewBox) for each port type
         this.PORT_ICONS = {
             Interface:          'M7,15H9V18H11V15H13V18H15V15H17V18H19V9H15V6H9V9H5V18H7V15M4.38,3H19.63C20.94,3 22,4.06 22,5.38V19.63A2.37,2.37 0 0,1 19.63,22H4.38C3.06,22 2,20.94 2,19.63V5.38C2,4.06 3.06,3 4.38,3Z',
             ConsolePort:        'M20,19V7H4V19H20M20,3A2,2 0 0,1 22,5V19A2,2 0 0,1 20,21H4A2,2 0 0,1 2,19V5C2,3.89 2.9,3 4,3H20M13,17V15H18V17H13M9.58,13L5.57,9H8.4L11.7,12.3C12.09,12.69 12.09,13.33 11.7,13.72L8.42,17H5.59L9.58,13Z',
@@ -69,7 +77,7 @@ class CablePatcher {
             RearPort_uncabled:  'M8 3H16C18.76 3 21 5.24 21 8V16C21 18.76 18.76 21 16 21H8C5.24 21 3 18.76 3 16V8C3 5.24 5.24 3 8 3M8 5C6.34 5 5 6.34 5 8V16C5 17.66 6.34 19 8 19H16C17.66 19 19 17.66 19 16V8C19 6.34 17.66 5 16 5H8Z',
         };
 
-        // Cable colors
+        // Cable colors by type
         this.CABLE_COLORS = {
             'cat6': '#3498db',
             'cat6a': '#2980b9',
@@ -90,52 +98,42 @@ class CablePatcher {
 
     // ========== URL State Management ==========
 
-    /**
-     * Read current selections from URL query parameters.
-     * Returns an object with site, location, rack, device, mode keys.
-     */
     readUrlState() {
         const params = new URLSearchParams(window.location.search);
         return {
             site: params.get('site') || '',
             location: params.get('location') || '',
             rack: params.get('rack') || '',
-            device: params.get('device') || '',
-            mode: params.get('mode') || ''
+            mode: params.get('mode') || '',
+            left: params.get('left') || '',
+            right: params.get('right') || ''
         };
     }
 
-    /**
-     * Push current dropdown selections into the URL without reloading.
-     */
     pushUrlState() {
         const params = new URLSearchParams();
         const site = document.getElementById('site-select').value;
         const location = document.getElementById('location-select').value;
         const rack = document.getElementById('rack-select').value;
-        const device = document.getElementById('primary-device-select').value;
         const mode = this.currentMode;
 
         if (site) params.set('site', site);
         if (location) params.set('location', location);
         if (rack) params.set('rack', rack);
-        if (device) params.set('device', device);
         if (mode && mode !== 'network') params.set('mode', mode);
+        if (this.leftDeviceIds.length > 0) params.set('left', this.leftDeviceIds.join(','));
+        if (this.rightDeviceIds.length > 0) params.set('right', this.rightDeviceIds.join(','));
 
         const qs = params.toString();
         const newUrl = window.location.pathname + (qs ? '?' + qs : '');
         window.history.replaceState(null, '', newUrl);
     }
 
-    /**
-     * After locations have loaded, restore the full view from URL params.
-     * Walks the cascade: site → location → rack → loadDevices → device.
-     */
     async restoreFromUrl() {
         const state = this.readUrlState();
         if (!state.site) return;
 
-        // Restore mode first
+        // Restore mode
         if (state.mode) {
             const modeRadio = document.querySelector(`input[name="mode"][value="${state.mode}"]`);
             if (modeRadio) {
@@ -161,7 +159,7 @@ class CablePatcher {
             this.populateSelect('rack-select', rackOptions, 'Select Rack...', false);
         }
 
-        // Set location (if any) and populate its racks
+        // Set location and populate its racks
         if (state.location) {
             this.setSelectValue('location-select', state.location);
             const loc = site.locations.find(l => l.id == state.location);
@@ -176,49 +174,62 @@ class CablePatcher {
             this.setSelectValue('rack-select', state.rack);
         }
 
-        // Load devices with the most specific filter
+        // Load available devices pool
         const loadParams = {};
         if (state.rack) loadParams.rack = state.rack;
         else if (state.location) loadParams.location = state.location;
         else loadParams.site = state.site;
 
-        await this.loadDevices(loadParams);
+        await this.loadAvailableDevices(loadParams);
 
-        // Restore device selection after devices have loaded
-        if (state.device) {
-            this.setSelectValue('primary-device-select', state.device);
-            this.primaryDeviceId = parseInt(state.device) || null;
-            this.render();
+        // Restore left/right device selections
+        if (state.left) {
+            const leftIds = state.left.split(',').map(Number).filter(Boolean);
+            for (const id of leftIds) {
+                if (this.availableDevices.some(d => d.id === id) && !this.leftDeviceIds.includes(id)) {
+                    this.leftDeviceIds.push(id);
+                }
+            }
         }
+        if (state.right) {
+            const rightIds = state.right.split(',').map(Number).filter(Boolean);
+            for (const id of rightIds) {
+                if (this.availableDevices.some(d => d.id === id) && !this.rightDeviceIds.includes(id)) {
+                    this.rightDeviceIds.push(id);
+                }
+            }
+        }
+
+        this.renderChips();
+        await this.loadCablesAndRender();
     }
 
-    /**
-     * Set a <select> value, handling TomSelect if present.
-     */
     setSelectValue(selectId, value) {
         const el = document.getElementById(selectId);
         if (!el) return;
         if (el.tomselect) {
-            el.tomselect.setValue(value, true);  // silent=true to avoid triggering change
+            el.tomselect.setValue(value, true);
         } else {
             el.value = value;
         }
     }
 
+    // ========== Event Listeners ==========
+
     setupEventListeners() {
-        // Helper to safely add event listeners
         const addListener = (id, event, handler) => {
             const el = document.getElementById(id);
-            if (el) {
-                el.addEventListener(event, handler);
-            }
+            if (el) el.addEventListener(event, handler);
         };
 
-        // Location selectors
+        // Location cascade
         addListener('site-select', 'change', (e) => this.onSiteChange(e));
         addListener('location-select', 'change', (e) => this.onLocationChange(e));
         addListener('rack-select', 'change', (e) => this.onRackChange(e));
-        addListener('primary-device-select', 'change', (e) => this.onPrimaryDeviceChange(e));
+
+        // Left/right device selects — auto-add on selection change
+        addListener('left-device-select', 'change', () => this.onAddDevice('left'));
+        addListener('right-device-select', 'change', () => this.onAddDevice('right'));
 
         // Mode switches
         document.querySelectorAll('input[name="mode"]').forEach(radio => {
@@ -235,12 +246,9 @@ class CablePatcher {
         addListener('delete-cable-btn', 'click', () => this.deleteSelectedCable());
 
         // Create cable modal
-        addListener('create-cable-btn', 'click', () => {
-            console.log('Create cable button clicked');
-            this.createCable();
-        });
+        addListener('create-cable-btn', 'click', () => this.createCable());
 
-        // Modal dismiss buttons (for when Bootstrap isn't available as global)
+        // Modal dismiss
         document.querySelectorAll('[data-bs-dismiss="modal"]').forEach(btn => {
             btn.addEventListener('click', () => {
                 const modal = btn.closest('.modal');
@@ -248,16 +256,13 @@ class CablePatcher {
             });
         });
 
-        // SVG events for cable drawing and device dragging
+        // SVG events
         if (this.svg) {
             this.svg.addEventListener('mousemove', (e) => {
                 this.onSvgMouseMove(e);
                 this.onDeviceDrag(e);
             });
-            this.svg.addEventListener('click', (e) => {
-                console.log('SVG click target:', e.target.tagName, e.target.className?.baseVal || e.target.className);
-                this.onSvgClick(e);
-            });
+            this.svg.addEventListener('click', (e) => this.onSvgClick(e));
             this.svg.addEventListener('mouseup', (e) => this.onDeviceDragEnd(e));
             this.svg.addEventListener('mouseleave', (e) => this.onDeviceDragEnd(e));
         }
@@ -268,10 +273,7 @@ class CablePatcher {
                 this.cancelPendingConnection();
                 this.closeCablePanel();
             }
-
-            // Delete/Backspace deletes selected cable(s)
             if (e.key === 'Delete' || e.key === 'Backspace') {
-                // Don't trigger when typing in an input/select
                 if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
                 if (this.selectedCables && this.selectedCables.length > 0) {
                     e.preventDefault();
@@ -281,8 +283,6 @@ class CablePatcher {
                     this.deleteSelectedCable();
                 }
             }
-
-            // Enter submits the create-cable modal when visible
             if (e.key === 'Enter') {
                 const modal = document.getElementById('create-cable-modal');
                 if (modal && (modal.classList.contains('show') || modal.style.display === 'block')) {
@@ -298,9 +298,7 @@ class CablePatcher {
     async apiGet(endpoint) {
         const response = await fetch(this.apiBase + endpoint, {
             credentials: 'same-origin',
-            headers: {
-                'Accept': 'application/json',
-            }
+            headers: { 'Accept': 'application/json' }
         });
         if (!response.ok) throw new Error(`API error: ${response.status}`);
         return response.json();
@@ -327,9 +325,7 @@ class CablePatcher {
         const response = await fetch(this.apiBase + endpoint, {
             method: 'DELETE',
             credentials: 'same-origin',
-            headers: {
-                'X-CSRFToken': this.csrfToken,
-            }
+            headers: { 'X-CSRFToken': this.csrfToken }
         });
         if (!response.ok && response.status !== 204) {
             throw new Error(`API error: ${response.status}`);
@@ -342,18 +338,8 @@ class CablePatcher {
     async loadLocations() {
         try {
             const resp = await this.apiGet('locations/');
-
-            if (Array.isArray(resp)) {
-                this.locations = resp;
-            } else if (resp && Array.isArray(resp.results)) {
-                this.locations = resp.results;
-            } else {
-                this.locations = [];
-            }
-
+            this.locations = Array.isArray(resp) ? resp : (resp?.results || []);
             this.populateSiteSelect();
-
-            // Restore view from URL params (site/location/rack/device)
             await this.restoreFromUrl();
         } catch (error) {
             console.error('CablePatcher: Failed to load locations:', error);
@@ -368,81 +354,52 @@ class CablePatcher {
         this.populateSelect('site-select', options, 'Select Site...');
     }
 
-    // Helper to populate select elements, handling TomSelect if present
     populateSelect(selectId, options, placeholder = 'Select...', disabled = false) {
         const select = document.getElementById(selectId);
         if (!select) return;
-
         const ts = select.tomselect;
-
         if (ts) {
-            // TomSelect: use its API
             ts.clear();
             ts.clearOptions();
             ts.addOption({ value: '', text: placeholder });
-            options.forEach(opt => {
-                ts.addOption({ value: opt.value, text: opt.text });
-            });
+            options.forEach(opt => ts.addOption({ value: opt.value, text: opt.text }));
             ts.refreshOptions(false);
-            if (disabled) {
-                ts.disable();
-            } else {
-                ts.enable();
-            }
+            disabled ? ts.disable() : ts.enable();
         } else {
-            // Native select
             select.innerHTML = '';
             select.add(new Option(placeholder, ''));
-            options.forEach(opt => {
-                select.add(new Option(opt.text, opt.value));
-            });
+            options.forEach(opt => select.add(new Option(opt.text, opt.value)));
             select.disabled = disabled;
         }
     }
 
-    async loadDevices(params) {
+    /**
+     * Load the pool of devices available for the current site/location/rack filter.
+     * Populates both left/right device dropdowns but does NOT change left/right selections.
+     */
+    async loadAvailableDevices(params) {
         this.showLoading(true);
-
         try {
-            // Query the plugin devices endpoint which returns devices with ports
-            // already serialized by `DeviceWithPortsSerializer`.
             const qp = new URLSearchParams();
             if (params.rack) qp.set('rack', params.rack);
             else if (params.location) qp.set('location', params.location);
             else if (params.site) qp.set('site', params.site);
 
             const devicesResponse = await this.apiGet('devices/?' + qp.toString());
-            // The plugin returns an array of device objects matching the serializer
-            this.devices = devicesResponse || [];
+            this.availableDevices = devicesResponse || [];
 
-            // Load cables from plugin endpoint. Prefer server-side filtering by
-            // the same params to avoid fetching the entire NetBox cable list.
-            let cablesQuery = '';
-            if (params.rack) cablesQuery = 'cables/?rack=' + params.rack;
-            else if (params.location) cablesQuery = 'cables/?location=' + params.location;
-            else if (params.site) cablesQuery = 'cables/?site=' + params.site;
-            else if (this.devices.length > 0) {
-                // Request cables by device IDs
-                const parts = this.devices.map(d => 'device_ids[]=' + d.id).join('&');
-                cablesQuery = 'cables/?' + parts;
-            }
+            // Populate both device dropdowns
+            const options = this.availableDevices.map(d => ({ value: d.id, text: d.name }));
+            this.populateSelect('left-device-select', options, 'Select device to add...', options.length === 0);
+            this.populateSelect('right-device-select', options, 'Select device to add...', options.length === 0);
 
-            if (cablesQuery) {
-                const cablesResponse = await this.apiGet(cablesQuery);
-                this.cables = cablesResponse || [];
-            } else {
-                this.cables = [];
-            }
+            // Enable/disable add buttons
+            const hasDevices = options.length > 0;
+            const addLeftBtn = document.getElementById('add-left-btn');
+            const addRightBtn = document.getElementById('add-right-btn');
+            if (addLeftBtn) addLeftBtn.disabled = !hasDevices;
+            if (addRightBtn) addRightBtn.disabled = !hasDevices;
 
-            // Rebuild the device dropdown, then restore the previous selection
-            // so that cable create/delete doesn't jump to a different device.
-            const previousDeviceId = this.primaryDeviceId;
-            this.populatePrimaryDeviceSelect();
-            if (previousDeviceId && this.devices.some(d => d.id === previousDeviceId)) {
-                this.setSelectValue('primary-device-select', previousDeviceId);
-                this.primaryDeviceId = previousDeviceId;
-            }
-            this.render();
         } catch (error) {
             console.error('Failed to load devices:', error);
             this.showError('Failed to load devices');
@@ -451,9 +408,27 @@ class CablePatcher {
         }
     }
 
-    populatePrimaryDeviceSelect() {
-        const options = this.devices.map(d => ({ value: d.id, text: d.name }));
-        this.populateSelect('primary-device-select', options, 'Select Device...', this.devices.length === 0);
+    /**
+     * Fetch cables for all currently visible (left + right) devices and re-render.
+     */
+    async loadCablesAndRender() {
+        const allIds = [...new Set([...this.leftDeviceIds, ...this.rightDeviceIds])];
+        if (allIds.length === 0) {
+            this.cables = [];
+            this.render();
+            return;
+        }
+
+        try {
+            const parts = allIds.map(id => 'device_ids[]=' + id).join('&');
+            const cablesResponse = await this.apiGet('cables/?' + parts);
+            this.cables = cablesResponse || [];
+        } catch (error) {
+            console.error('Failed to load cables:', error);
+            this.cables = [];
+        }
+
+        this.render();
     }
 
     // ========== Event Handlers ==========
@@ -465,29 +440,39 @@ class CablePatcher {
         this.populateSelect('location-select', [], 'Select Location...', true);
         this.populateSelect('rack-select', [], 'Select Rack...', true);
 
+        // Clear device panels
+        this.availableDevices = [];
+        this.leftDeviceIds = [];
+        this.rightDeviceIds = [];
+        this.renderChips();
+        this.cables = [];
+        this.render();
+
         if (!siteId) {
+            this.populateSelect('left-device-select', [], 'Select device to add...', true);
+            this.populateSelect('right-device-select', [], 'Select device to add...', true);
+            const addLeftBtn = document.getElementById('add-left-btn');
+            const addRightBtn = document.getElementById('add-right-btn');
+            if (addLeftBtn) addLeftBtn.disabled = true;
+            if (addRightBtn) addRightBtn.disabled = true;
             this.pushUrlState();
-            this.showEmpty();
             return;
         }
 
         const site = this.locations.find(s => s.id == siteId);
         if (!site) return;
 
-        // Populate locations
         if (site.locations.length > 0) {
             const locOptions = site.locations.map(l => ({ value: l.id, text: l.name }));
             this.populateSelect('location-select', locOptions, 'Select Location...', false);
         }
 
-        // Populate racks (site-level racks)
         if (site.racks.length > 0 || site.locations.length === 0) {
             const rackOptions = site.racks.map(r => ({ value: r.id, text: r.name }));
             this.populateSelect('rack-select', rackOptions, 'Select Rack...', false);
         }
 
-        // Load devices for entire site if no more specific selection
-        this.loadDevices({ site: siteId });
+        this.loadAvailableDevices({ site: siteId });
         this.pushUrlState();
     }
 
@@ -495,14 +480,10 @@ class CablePatcher {
         const locationId = e.target.value;
         const siteId = document.getElementById('site-select').value;
 
-        // Reset rack dropdown
         this.populateSelect('rack-select', [], 'Select Rack...', true);
 
         if (!locationId) {
-            // Fall back to site-level
-            if (siteId) {
-                this.loadDevices({ site: siteId });
-            }
+            if (siteId) this.loadAvailableDevices({ site: siteId });
             this.pushUrlState();
             return;
         }
@@ -515,7 +496,7 @@ class CablePatcher {
             this.populateSelect('rack-select', rackOptions, 'Select Rack...', false);
         }
 
-        this.loadDevices({ location: locationId });
+        this.loadAvailableDevices({ location: locationId });
         this.pushUrlState();
     }
 
@@ -525,22 +506,53 @@ class CablePatcher {
         if (!rackId) {
             const locationId = document.getElementById('location-select').value;
             const siteId = document.getElementById('site-select').value;
-            if (locationId) {
-                this.loadDevices({ location: locationId });
-            } else if (siteId) {
-                this.loadDevices({ site: siteId });
-            }
+            if (locationId) this.loadAvailableDevices({ location: locationId });
+            else if (siteId) this.loadAvailableDevices({ site: siteId });
             this.pushUrlState();
             return;
         }
 
-        this.loadDevices({ rack: rackId });
+        this.loadAvailableDevices({ rack: rackId });
         this.pushUrlState();
     }
 
-    onPrimaryDeviceChange(e) {
-        this.primaryDeviceId = e.target.value ? parseInt(e.target.value) : null;
-        this.render();
+    async onAddDevice(side) {
+        const selectId = side === 'left' ? 'left-device-select' : 'right-device-select';
+        const select = document.getElementById(selectId);
+        if (!select || !select.value) return;
+
+        const deviceId = parseInt(select.value);
+        if (!deviceId) return;
+
+        const idList = side === 'left' ? this.leftDeviceIds : this.rightDeviceIds;
+        const otherList = side === 'left' ? this.rightDeviceIds : this.leftDeviceIds;
+
+        // Don't add duplicates (device can't be on both sides)
+        if (idList.includes(deviceId)) return;
+        if (otherList.includes(deviceId)) {
+            this.showError('This device is already on the other side. Remove it first.');
+            return;
+        }
+
+        idList.push(deviceId);
+
+        // Reset the dropdown
+        this.setSelectValue(selectId, '');
+
+        this.renderChips();
+        await this.loadCablesAndRender();
+        this.pushUrlState();
+    }
+
+    onRemoveDevice(side, deviceId) {
+        if (side === 'left') {
+            this.leftDeviceIds = this.leftDeviceIds.filter(id => id !== deviceId);
+        } else {
+            this.rightDeviceIds = this.rightDeviceIds.filter(id => id !== deviceId);
+        }
+
+        this.renderChips();
+        this.loadCablesAndRender();
         this.pushUrlState();
     }
 
@@ -550,10 +562,63 @@ class CablePatcher {
         this.pushUrlState();
     }
 
+    // ========== Device Chips UI ==========
+
+    renderChips() {
+        this._renderChipList('left', this.leftDeviceIds, document.getElementById('left-device-chips'));
+        this._renderChipList('right', this.rightDeviceIds, document.getElementById('right-device-chips'));
+        this._refreshDeviceDropdowns();
+    }
+
+    /**
+     * Rebuild both device dropdowns excluding devices already placed on either side.
+     */
+    _refreshDeviceDropdowns() {
+        const usedIds = new Set([...this.leftDeviceIds, ...this.rightDeviceIds]);
+        const available = this.availableDevices.filter(d => !usedIds.has(d.id));
+        const options = available.map(d => ({ value: d.id, text: d.name }));
+        const empty = options.length === 0;
+        this.populateSelect('left-device-select', options, '— Select device to add to left —', empty);
+        this.populateSelect('right-device-select', options, '— Select device to add to right —', empty);
+    }
+
+    _renderChipList(side, deviceIds, container) {
+        if (!container) return;
+        container.innerHTML = '';
+        deviceIds.forEach(id => {
+            const device = this.availableDevices.find(d => d.id === id);
+            if (!device) return;
+
+            const chip = document.createElement('span');
+            chip.className = 'device-chip device-chip--' + side;
+            chip.title = device.name;
+
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'device-chip__name';
+            nameSpan.textContent = device.name;
+
+            const removeBtn = document.createElement('button');
+            removeBtn.className = 'device-chip__remove';
+            removeBtn.type = 'button';
+            removeBtn.setAttribute('aria-label', 'Remove ' + device.name);
+            removeBtn.innerHTML = '&times;';
+            removeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.onRemoveDevice(side, id);
+            });
+
+            chip.appendChild(nameSpan);
+            chip.appendChild(removeBtn);
+            container.appendChild(chip);
+        });
+    }
+
     // ========== Rendering ==========
 
     render() {
-        if (this.devices.length === 0) {
+        const totalVisible = this.leftDeviceIds.length + this.rightDeviceIds.length;
+
+        if (totalVisible === 0) {
             this.showEmpty();
             return;
         }
@@ -565,99 +630,40 @@ class CablePatcher {
         this.devicesLayer.innerHTML = '';
         this.tempCableLayer.innerHTML = '';
 
-        // Get ports based on mode
         const portTypes = this.getPortTypesForMode();
-
-        // Separate primary device and others
-        const primaryDevice = this.primaryDeviceId
-            ? this.devices.find(d => d.id === this.primaryDeviceId)
-            : this.devices[0];
-
-        // Patch panel devices: network mode only, and only if at least one port is cabled
-        const patchPanelDevices = this.currentMode === 'network'
-            ? this.devices
-                .filter(d => d.id !== primaryDevice?.id)
-                .filter(d => {
-                    const fps = d.front_ports || [];
-                    const rps = d.rear_ports || [];
-                    return (fps.length > 0 || rps.length > 0) &&
-                           (fps.some(p => p.cable_id) || rps.some(p => p.cable_id));
-                })
-                .sort((a, b) => a.name.localeCompare(b.name))
-            : [];
-
-        // Secondary devices: exclude patch panels, filter to mode-specific ports
-        const otherDevices = this.devices
-            .filter(d => d.id !== primaryDevice?.id)
-            .filter(d => !patchPanelDevices.some(pp => pp.id === d.id))
-            .filter(d => portTypes.some(type => (d[type] || []).length > 0))
-            .sort((a, b) => {
-                if (!primaryDevice) return 0;
-                const countCables = (device) => {
-                    return this.cables.filter(cable => {
-                        const aTerms = cable.a_terminations || [];
-                        const bTerms = cable.b_terminations || [];
-                        const deviceIds = [device.id];
-                        const primaryIds = [primaryDevice.id];
-                        const aDevices = aTerms.map(t => t.device_id);
-                        const bDevices = bTerms.map(t => t.device_id);
-                        return (aDevices.some(id => primaryIds.includes(id)) && bDevices.some(id => deviceIds.includes(id))) ||
-                               (bDevices.some(id => primaryIds.includes(id)) && aDevices.some(id => deviceIds.includes(id)));
-                    }).length;
-                };
-                return countCables(b) - countCables(a);
-            });
-
-        // Track port positions for cable routing
         this.portPositions = {};
+
+        // Right column X = left column's right edge + CENTER_GAP
+        const RIGHT_X = this.LEFT_X + this.DEVICE_WIDTH + this.CENTER_GAP;
 
         let maxHeight = 0;
 
-        // Render primary device on left
-        if (primaryDevice) {
-            const height = this.renderDevice(primaryDevice, this.PRIMARY_X, 20, true, portTypes);
-            maxHeight = Math.max(maxHeight, height);
-        }
-
-        // Compute X positions for middle (patch panels) and secondary columns
-        const hasPatchPanels = patchPanelDevices.length > 0;
-        const MIDDLE_X = this.PRIMARY_X + this.DEVICE_WIDTH + 80;
-        const effectiveSecondaryX = hasPatchPanels ? MIDDLE_X + this.DEVICE_WIDTH + 80 : this.SECONDARY_X;
-
-        // Render middle column (patch panels) — always use front_ports/rear_ports
-        this._middleDevicePositions = [];
-        let midYOffset = 20;
-        patchPanelDevices.forEach(device => {
-            const height = this.renderDevice(
-                device, MIDDLE_X, midYOffset, false, ['front_ports', 'rear_ports'], true
-            );
-            this._middleDevicePositions.push({ device, y: midYOffset, height });
-            midYOffset += height + this.DEVICE_GAP;
-            maxHeight = Math.max(maxHeight, midYOffset);
+        // Render left devices (ports on right edge)
+        this._leftDevicePositions = [];
+        let leftY = 20;
+        this.leftDeviceIds.forEach(id => {
+            const device = this.availableDevices.find(d => d.id === id);
+            if (!device) return;
+            const height = this.renderDevice(device, this.LEFT_X, leftY, 'left', portTypes);
+            this._leftDevicePositions.push({ device, y: leftY, height });
+            leftY += height + this.DEVICE_GAP;
+            maxHeight = Math.max(maxHeight, leftY);
         });
 
-        // Apply user-defined device order if available
-        if (this.deviceOrder.length > 0) {
-            const orderMap = new Map(this.deviceOrder.map((id, i) => [id, i]));
-            otherDevices.sort((a, b) => {
-                const ai = orderMap.has(a.id) ? orderMap.get(a.id) : Infinity;
-                const bi = orderMap.has(b.id) ? orderMap.get(b.id) : Infinity;
-                return ai - bi;
-            });
-        }
-
-        // Render other devices on right
-        this._secondaryDevicePositions = [];
-        let yOffset = 20;
-        otherDevices.forEach(device => {
-            const height = this.renderDevice(device, effectiveSecondaryX, yOffset, false, portTypes);
-            this._secondaryDevicePositions.push({ device, y: yOffset, height });
-            yOffset += height + this.DEVICE_GAP;
-            maxHeight = Math.max(maxHeight, yOffset);
+        // Render right devices (ports on left edge)
+        this._rightDevicePositions = [];
+        let rightY = 20;
+        this.rightDeviceIds.forEach(id => {
+            const device = this.availableDevices.find(d => d.id === id);
+            if (!device) return;
+            const height = this.renderDevice(device, RIGHT_X, rightY, 'right', portTypes);
+            this._rightDevicePositions.push({ device, y: rightY, height });
+            rightY += height + this.DEVICE_GAP;
+            maxHeight = Math.max(maxHeight, rightY);
         });
 
         // Update SVG size
-        const totalWidth = effectiveSecondaryX + this.DEVICE_WIDTH + 100;
+        const totalWidth = RIGHT_X + this.DEVICE_WIDTH + 40;
         this.svg.setAttribute('width', totalWidth);
         this.svg.setAttribute('height', maxHeight + 50);
 
@@ -670,47 +676,32 @@ class CablePatcher {
 
     getPortTypesForMode() {
         switch (this.currentMode) {
-            case 'network':
-                return ['interfaces'];
-            case 'power':
-                return ['power_ports', 'power_outlets'];
-            case 'console':
-                return ['console_ports', 'console_server_ports'];
-            default:
-                return ['interfaces'];
+            case 'network': return ['interfaces'];
+            case 'power': return ['power_ports', 'power_outlets'];
+            case 'console': return ['console_ports', 'console_server_ports'];
+            default: return ['interfaces'];
         }
     }
 
-    renderDevice(device, x, y, isPrimary, portTypes, isMiddle = false) {
+    /**
+     * Render a device card at position (x, y).
+     * side: 'left' → port connector dot on right edge of card
+     *       'right' → port connector dot on left edge of card
+     */
+    renderDevice(device, x, y, side, portTypes) {
+        const isLeft = side === 'left';
+
         const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-        g.setAttribute('class', 'device' + (isPrimary ? ' primary' : ''));
+        g.setAttribute('class', 'device device--' + side);
         g.setAttribute('data-device-id', device.id);
 
-        // Collect all ports for this mode
+        // Collect ports
         let ports = [];
-        let rowCount;
-        if (isMiddle) {
-            // Pair front_ports with rear_ports by sorted name so each pair shares a row
-            const frontPorts = [...(device.front_ports || [])]
-                .sort((a, b) => a.name.localeCompare(b.name, undefined, {numeric: true}));
-            const rearPorts = [...(device.rear_ports || [])]
-                .sort((a, b) => a.name.localeCompare(b.name, undefined, {numeric: true}));
-            rowCount = Math.max(frontPorts.length, rearPorts.length);
-            for (let i = 0; i < rowCount; i++) {
-                if (frontPorts[i]) ports.push({...frontPorts[i], _portType: 'front_ports', _rowIndex: i});
-                if (rearPorts[i]) ports.push({...rearPorts[i], _portType: 'rear_ports', _rowIndex: i});
-            }
-        } else {
-            portTypes.forEach(type => {
-                const devicePorts = device[type] || [];
-                ports = ports.concat(devicePorts.map(p => ({
-                    ...p,
-                    _portType: type
-                })));
-            });
-            rowCount = ports.length;
-        }
+        portTypes.forEach(type => {
+            (device[type] || []).forEach(p => ports.push({ ...p, _portType: type }));
+        });
 
+        const rowCount = ports.length;
         const deviceHeight = this.DEVICE_HEADER_HEIGHT + (rowCount * this.PORT_HEIGHT) + this.DEVICE_PADDING;
 
         // Device background
@@ -720,17 +711,17 @@ class CablePatcher {
         rect.setAttribute('width', this.DEVICE_WIDTH);
         rect.setAttribute('height', deviceHeight);
         rect.setAttribute('rx', 8);
-        rect.setAttribute('class', 'device-box');
+        rect.setAttribute('class', 'device-box device-box--' + side);
         g.appendChild(rect);
 
-        // Device header
+        // Device header background
         const headerBg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
         headerBg.setAttribute('x', x);
         headerBg.setAttribute('y', y);
         headerBg.setAttribute('width', this.DEVICE_WIDTH);
         headerBg.setAttribute('height', this.DEVICE_HEADER_HEIGHT);
         headerBg.setAttribute('rx', 8);
-        headerBg.setAttribute('class', 'device-header');
+        headerBg.setAttribute('class', 'device-header device-header--' + side);
         g.appendChild(headerBg);
 
         // Cover bottom corners of header
@@ -739,7 +730,7 @@ class CablePatcher {
         headerCover.setAttribute('y', y + this.DEVICE_HEADER_HEIGHT - 8);
         headerCover.setAttribute('width', this.DEVICE_WIDTH);
         headerCover.setAttribute('height', 8);
-        headerCover.setAttribute('class', 'device-header');
+        headerCover.setAttribute('class', 'device-header device-header--' + side);
         g.appendChild(headerCover);
 
         // Device name
@@ -750,81 +741,47 @@ class CablePatcher {
         text.textContent = device.name;
         g.appendChild(text);
 
-        // Double-click device header to open in NetBox
-        const onDeviceDblClick = (e) => {
+        // Double-click header to open device in NetBox
+        const onDblClick = (e) => {
             e.stopPropagation();
             window.open('/dcim/devices/' + device.id + '/', '_blank');
         };
-        headerBg.addEventListener('dblclick', onDeviceDblClick);
-        headerCover.addEventListener('dblclick', onDeviceDblClick);
+        headerBg.addEventListener('dblclick', onDblClick);
+        headerCover.addEventListener('dblclick', onDblClick);
 
-        // Drag handle for secondary (right-side) devices
-        if (!isPrimary && !isMiddle) {
-            headerBg.style.cursor = 'grab';
-            headerCover.style.cursor = 'grab';
+        // Drag handle on header for reordering within column
+        headerBg.style.cursor = 'grab';
+        headerCover.style.cursor = 'grab';
 
-            const onDragStart = (e) => {
-                // Use a threshold to distinguish clicks from drags
-                const svgPt = this.svgPoint(e);
-                if (!svgPt) return;
-                this.draggingDevice = {
-                    deviceId: device.id,
-                    group: g,
-                    startY: svgPt.y,
-                    origTranslateY: 0,
-                    moved: false
-                };
-                this.container.classList.add('dragging-device');
-                headerBg.style.cursor = 'grabbing';
-                headerCover.style.cursor = 'grabbing';
-                e.preventDefault();
+        const onDragStart = (e) => {
+            const svgPt = this.svgPoint(e);
+            if (!svgPt) return;
+            this.draggingDevice = {
+                deviceId: device.id,
+                side: side,
+                group: g,
+                startY: svgPt.y,
+                moved: false
             };
+            this.container.classList.add('dragging-device');
+            headerBg.style.cursor = 'grabbing';
+            headerCover.style.cursor = 'grabbing';
+            e.preventDefault();
+        };
+        headerBg.addEventListener('mousedown', onDragStart);
+        headerCover.addEventListener('mousedown', onDragStart);
 
-            headerBg.addEventListener('mousedown', onDragStart);
-            headerCover.addEventListener('mousedown', onDragStart);
-        }
-
-        // Render ports
-        // Default: primary device ports on right edge, secondary on left edge
-        // In power mode, reverse: outlets face right (toward cables), power ports face left
-        const defaultPortX = isPrimary ? x + this.DEVICE_WIDTH - this.DEVICE_PADDING : x + this.DEVICE_PADDING;
+        // Port connector dot X position: right edge for left devices, left edge for right devices
+        const portX = isLeft
+            ? x + this.DEVICE_WIDTH - this.DEVICE_PADDING
+            : x + this.DEVICE_PADDING;
 
         ports.forEach((port, index) => {
-            const rowIndex = isMiddle ? port._rowIndex : index;
-            const portY = y + this.DEVICE_HEADER_HEIGHT + (rowIndex * this.PORT_HEIGHT) + this.PORT_HEIGHT / 2;
+            const portY = y + this.DEVICE_HEADER_HEIGHT + (index * this.PORT_HEIGHT) + this.PORT_HEIGHT / 2;
 
-            // In power mode, determine port edge by port type
-            let portX = defaultPortX;
-            if (this.currentMode === 'power') {
-                if (port._portType === 'power_outlets') {
-                    portX = x + this.DEVICE_WIDTH - this.DEVICE_PADDING; // right edge
-                } else if (port._portType === 'power_ports') {
-                    portX = x + this.DEVICE_PADDING; // left edge
-                }
-            } else if (this.currentMode === 'console') {
-                if (port._portType === 'console_server_ports') {
-                    portX = x + this.DEVICE_WIDTH - this.DEVICE_PADDING; // right edge
-                } else if (port._portType === 'console_ports') {
-                    portX = x + this.DEVICE_PADDING; // left edge
-                }
-            }
-            if (isMiddle) {
-                if (port._portType === 'front_ports') {
-                    portX = x + this.DEVICE_PADDING; // left — faces primary
-                } else if (port._portType === 'rear_ports') {
-                    portX = x + this.DEVICE_WIDTH - this.DEVICE_PADDING; // right — faces secondary
-                }
-            }
-
-            // Store port position
+            // Store port position for cable routing
             const portKey = `${port.port_type}-${port.id}`;
-            this.portPositions[portKey] = {
-                x: portX,
-                y: portY,
-                device: device,
-                port: port,
-                isPrimary: isPrimary
-            };
+            this.portPositions[portKey] = { x: portX, y: portY, device, port, side };
 
             // Port circle
             const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
@@ -836,22 +793,17 @@ class CablePatcher {
             circle.setAttribute('data-port-id', port.id);
             circle.setAttribute('data-device-id', device.id);
 
-            // Color based on port type
             const color = this.PORT_COLORS[port.port_type] || this.PORT_COLORS.default;
             circle.style.fill = port.cable_id ? color : '#fff';
             circle.style.stroke = color;
 
-            // Event handlers
             circle.addEventListener('mouseenter', (e) => this.onPortHover(e, port, device));
             circle.addEventListener('mouseleave', () => this.hideTooltip());
             circle.addEventListener('click', (e) => this.onPortClick(e, port, device));
             circle.addEventListener('dblclick', (e) => {
                 e.stopPropagation();
                 if (this.pendingConnection) {
-                    this.pendingConnection = null;
-                    this.container.classList.remove('connecting-mode');
-                    this.tempCableLayer.innerHTML = '';
-                    document.querySelectorAll('.port.connecting').forEach(p => p.classList.remove('connecting'));
+                    this.cancelPendingConnection();
                 }
                 const url = this.getPortUrl(port);
                 if (url) window.open(url, '_blank');
@@ -859,7 +811,7 @@ class CablePatcher {
 
             g.appendChild(circle);
 
-            // Port type icon inside the port circle
+            // Port type icon inside the circle
             const iconKey = (port.port_type === 'FrontPort' || port.port_type === 'RearPort')
                 ? (port.cable_id ? port.port_type : port.port_type + '_uncabled')
                 : port.port_type;
@@ -873,17 +825,20 @@ class CablePatcher {
                     `translate(${portX - iconSize / 2}, ${portY - iconSize / 2}) scale(${iconScale})`);
                 icon.setAttribute('class', 'port-icon');
                 icon.style.fill = port.cable_id ? '#ffffff' : color;
+                if (port.cable_id) icon.style.opacity = '0.6';
                 g.appendChild(icon);
             }
 
-            // Port label — position based on which edge the port is on
+            // Port label — on the inner side of the port dot
             const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            const portOnRight = portX > x + this.DEVICE_WIDTH / 2;
-            const labelX = portOnRight ? portX - this.PORT_RADIUS - 5 : portX + this.PORT_RADIUS + 5;
+            // Left device: label to the left of the dot; Right device: label to the right
+            const labelX = isLeft
+                ? portX - this.PORT_RADIUS - 5
+                : portX + this.PORT_RADIUS + 5;
             label.setAttribute('x', labelX);
             label.setAttribute('y', portY + 4);
-            label.setAttribute('class', 'port-label');
-            label.setAttribute('text-anchor', portOnRight ? 'end' : 'start');
+            label.setAttribute('class', 'port-label' + (port.cable_id ? ' port-label--connected' : ''));
+            label.setAttribute('text-anchor', isLeft ? 'end' : 'start');
             label.textContent = port.untagged_vlan_vid
                 ? `${port.name} (V${port.untagged_vlan_vid})`
                 : port.name;
@@ -895,53 +850,36 @@ class CablePatcher {
     }
 
     renderCables() {
-        this.cables.forEach(cable => {
-            this.renderCable(cable);
-        });
+        this.cables.forEach(cable => this.renderCable(cable));
     }
 
     renderCable(cable) {
-        // Find port positions for both terminations
         const aTerms = cable.a_terminations || [];
         const bTerms = cable.b_terminations || [];
-
         if (aTerms.length === 0 || bTerms.length === 0) return;
 
         const aTerm = aTerms[0];
         const bTerm = bTerms[0];
-
         const aKey = `${aTerm.type}-${aTerm.id}`;
         const bKey = `${bTerm.type}-${bTerm.id}`;
-
         const aPos = this.portPositions[aKey];
         const bPos = this.portPositions[bKey];
 
         if (!aPos || !bPos) return;
 
-        // Create cable path
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-
-        // Calculate bezier curve
         const d = this.calculateCablePath(aPos.x, aPos.y, bPos.x, bPos.y);
         path.setAttribute('d', d);
         path.setAttribute('class', 'cable');
         path.setAttribute('data-cable-id', cable.id);
 
-        // Color based on cable type or custom color
         let color = cable.color || this.CABLE_COLORS[cable.type] || this.CABLE_COLORS.default;
-        if (color && !color.startsWith('#')) {
-            color = '#' + color;
-        }
+        if (color && !color.startsWith('#')) color = '#' + color;
         path.style.stroke = color;
 
-        // Status styling
-        if (cable.status === 'planned') {
-            path.classList.add('planned');
-        } else if (cable.status === 'decommissioning') {
-            path.classList.add('decommissioning');
-        }
+        if (cable.status === 'planned') path.classList.add('planned');
+        else if (cable.status === 'decommissioning') path.classList.add('decommissioning');
 
-        // Click handler — pass event for multi-select detection
         path.addEventListener('click', (e) => {
             e.stopPropagation();
             this.selectCable(cable, e);
@@ -951,26 +889,22 @@ class CablePatcher {
     }
 
     calculateCablePath(x1, y1, x2, y2) {
-        // Calculate control points for smooth bezier curve
         const dx = Math.abs(x2 - x1);
         const controlOffset = Math.min(dx * 0.5, 150);
-
-        // Determine curve direction based on position
         const cp1x = x1 + (x1 < x2 ? controlOffset : -controlOffset);
         const cp2x = x2 + (x2 < x1 ? controlOffset : -controlOffset);
-
         return `M ${x1} ${y1} C ${cp1x} ${y1}, ${cp2x} ${y2}, ${x2} ${y2}`;
     }
 
     getPortUrl(port) {
         const map = {
-            Interface:         'interfaces',
-            ConsolePort:       'console-ports',
+            Interface: 'interfaces',
+            ConsolePort: 'console-ports',
             ConsoleServerPort: 'console-server-ports',
-            PowerPort:         'power-ports',
-            PowerOutlet:       'power-outlets',
-            FrontPort:         'front-ports',
-            RearPort:          'rear-ports',
+            PowerPort: 'power-ports',
+            PowerOutlet: 'power-outlets',
+            FrontPort: 'front-ports',
+            RearPort: 'rear-ports',
         };
         const segment = map[port.port_type];
         return segment ? `/dcim/${segment}/${port.id}/` : null;
@@ -986,13 +920,10 @@ class CablePatcher {
 
         portName.textContent = port.name;
         portType.textContent = port.type || port.port_type;
-
-        // Clear any existing content
         connection.innerHTML = '';
 
         if (port.connected_endpoint) {
             const ep = port.connected_endpoint;
-            // Use safe DOM construction to prevent XSS
             const badge = document.createElement('span');
             badge.className = 'badge bg-success';
             badge.textContent = 'Connected';
@@ -1005,7 +936,6 @@ class CablePatcher {
             connection.appendChild(badge);
         }
 
-        // Position tooltip
         const rect = e.target.getBoundingClientRect();
         tooltip.style.left = rect.right + 10 + 'px';
         tooltip.style.top = rect.top - 10 + 'px';
@@ -1018,59 +948,38 @@ class CablePatcher {
 
     onPortClick(e, port, device) {
         e.stopPropagation();
-        console.log('Port clicked:', port.name, 'cable_id:', port.cable_id, 'pending:', !!this.pendingConnection);
 
-        // If port is already connected, select the cable
         if (port.cable_id) {
-            console.log('Port already connected, selecting cable');
             const cable = this.cables.find(c => c.id === port.cable_id);
-            if (cable) {
-                this.selectCable(cable, e);
-            }
+            if (cable) this.selectCable(cable, e);
             return;
         }
 
-        // If no pending connection, start one
         if (!this.pendingConnection) {
-            console.log('Starting new connection');
             this.startConnection(port, device);
             return;
         }
 
-        // If we have a pending connection, complete it
-        console.log('Completing connection');
         this.completeConnection(port, device);
     }
 
     startConnection(port, device) {
-        this.pendingConnection = {
-            port: port,
-            device: device,
-            type: port.port_type
-        };
+        this.pendingConnection = { port, device, type: port.port_type };
 
-        // Highlight the starting port
         const portElement = document.querySelector(
             `circle[data-port-type="${port.port_type}"][data-port-id="${port.id}"]`
         );
-        if (portElement) {
-            portElement.classList.add('connecting');
-        }
-
-        // Show visual feedback
+        if (portElement) portElement.classList.add('connecting');
         this.container.classList.add('connecting-mode');
     }
 
     completeConnection(port, device) {
-        // Validate connection
         if (port.id === this.pendingConnection.port.id &&
             port.port_type === this.pendingConnection.type) {
-            // Can't connect to self
             this.cancelPendingConnection();
             return;
         }
 
-        // Show create cable modal
         const from = this.pendingConnection;
         const to = { port, device };
 
@@ -1079,7 +988,6 @@ class CablePatcher {
         document.getElementById('cable-to-input').value =
             `${to.device.name} - ${to.port.name}`;
 
-        // Store connection data for creation
         this._pendingCableData = {
             a_termination_type: from.type,
             a_termination_id: from.port.id,
@@ -1087,14 +995,12 @@ class CablePatcher {
             b_termination_id: to.port.id
         };
 
-        // Pre-select cable type based on current mode
-        const defaultTypes = { network: 'cat6', power: 'power', patch: 'mmf-om4' };
+        const defaultTypes = { network: 'cat6', power: 'power', console: 'cat5e' };
         const typeSelect = document.getElementById('cable-type-select');
         if (typeSelect && defaultTypes[this.currentMode]) {
             typeSelect.value = defaultTypes[this.currentMode];
         }
 
-        // Show modal
         this.showModal('create-cable-modal');
         this.cancelPendingConnection();
     }
@@ -1102,21 +1008,15 @@ class CablePatcher {
     showModal(modalId) {
         const modalEl = document.getElementById(modalId);
         if (!modalEl) return;
-
-        // Try Bootstrap first
         const Modal = window.bootstrap?.Modal || globalThis.bootstrap?.Modal;
         if (Modal) {
             Modal.getOrCreateInstance(modalEl).show();
             return;
         }
-
-        // Manual modal handling
         modalEl.style.display = 'block';
         modalEl.classList.add('show');
         modalEl.setAttribute('aria-modal', 'true');
         modalEl.removeAttribute('aria-hidden');
-
-        // Add backdrop
         let backdrop = document.querySelector('.modal-backdrop');
         if (!backdrop) {
             backdrop = document.createElement('div');
@@ -1127,47 +1027,28 @@ class CablePatcher {
     }
 
     hideModal(modalId) {
-        console.log('hideModal called for:', modalId);
         const modalEl = document.getElementById(modalId);
-        if (!modalEl) {
-            console.log('Modal element not found');
-            return;
-        }
-
-        // Try Bootstrap first
+        if (!modalEl) return;
         const Modal = window.bootstrap?.Modal || globalThis.bootstrap?.Modal;
         if (Modal) {
-            console.log('Using Bootstrap Modal.hide()');
             Modal.getInstance(modalEl)?.hide();
             return;
         }
-
-        // Manual modal handling
-        console.log('Using manual modal hide');
         modalEl.style.display = 'none';
         modalEl.classList.remove('show');
         modalEl.setAttribute('aria-hidden', 'true');
         modalEl.removeAttribute('aria-modal');
-
-        // Remove backdrop
         const backdrop = document.querySelector('.modal-backdrop');
-        console.log('Backdrop element:', backdrop);
         if (backdrop) backdrop.remove();
         document.body.classList.remove('modal-open');
-        console.log('Modal hide complete');
     }
 
     cancelPendingConnection() {
         if (!this.pendingConnection) return;
-
-        // Remove highlighting
         const portElement = document.querySelector(
             `circle[data-port-type="${this.pendingConnection.type}"][data-port-id="${this.pendingConnection.port.id}"]`
         );
-        if (portElement) {
-            portElement.classList.remove('connecting');
-        }
-
+        if (portElement) portElement.classList.remove('connecting');
         this.pendingConnection = null;
         this.container.classList.remove('connecting-mode');
         this.tempCableLayer.innerHTML = '';
@@ -1175,19 +1056,14 @@ class CablePatcher {
 
     onSvgMouseMove(e) {
         if (!this.pendingConnection) return;
-
         const svg = this.svg;
         const pt = svg.createSVGPoint();
         pt.x = e.clientX;
         pt.y = e.clientY;
         const svgPoint = pt.matrixTransform(svg.getScreenCTM().inverse());
-
-        // Get starting position
         const startKey = `${this.pendingConnection.type}-${this.pendingConnection.port.id}`;
         const startPos = this.portPositions[startKey];
         if (!startPos) return;
-
-        // Draw temporary cable
         this.tempCableLayer.innerHTML = '';
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         const d = this.calculateCablePath(startPos.x, startPos.y, svgPoint.x, svgPoint.y);
@@ -1197,13 +1073,12 @@ class CablePatcher {
     }
 
     onSvgClick(e) {
-        // If clicking on empty space while connecting, cancel
         if (this.pendingConnection && e.target === this.svg) {
             this.cancelPendingConnection();
         }
     }
 
-    // ========== Device Dragging ==========
+    // ========== Device Drag-to-Reorder ==========
 
     svgPoint(e) {
         const pt = this.svg.createSVGPoint();
@@ -1216,16 +1091,11 @@ class CablePatcher {
 
     onDeviceDrag(e) {
         if (!this.draggingDevice) return;
-
         const svgPt = this.svgPoint(e);
         if (!svgPt) return;
         const dy = svgPt.y - this.draggingDevice.startY;
-
-        // Movement threshold to distinguish from click
         if (Math.abs(dy) < 5 && !this.draggingDevice.moved) return;
         this.draggingDevice.moved = true;
-
-        // Move the device group visually
         const g = this.draggingDevice.group;
         g.setAttribute('transform', `translate(0, ${dy})`);
         g.style.opacity = '0.7';
@@ -1233,48 +1103,43 @@ class CablePatcher {
 
     onDeviceDragEnd(e) {
         if (!this.draggingDevice) return;
-
         const drag = this.draggingDevice;
         this.draggingDevice = null;
         this.container.classList.remove('dragging-device');
-
-        // Reset visual state
         drag.group.removeAttribute('transform');
         drag.group.style.opacity = '';
-
         if (!drag.moved) return;
 
-        // Determine new order based on drop position
         const svgPt = this.svgPoint(e);
         if (!svgPt) { this.render(); return; }
-        const positions = this._secondaryDevicePositions || [];
+
+        const positions = drag.side === 'left' ? this._leftDevicePositions : this._rightDevicePositions;
+        const idList = drag.side === 'left' ? this.leftDeviceIds : this.rightDeviceIds;
         if (positions.length === 0) return;
 
-        // Find where the device was dropped (by Y center)
         const draggedIdx = positions.findIndex(p => p.device.id === drag.deviceId);
         if (draggedIdx === -1) return;
 
         const draggedPos = positions[draggedIdx];
         const draggedCenter = draggedPos.y + draggedPos.height / 2 + (svgPt.y - drag.startY);
 
-        // Find target index (default to end so drop below all → last position)
         let targetIdx = positions.length;
         for (let i = 0; i < positions.length; i++) {
             const mid = positions[i].y + positions[i].height / 2;
-            if (draggedCenter < mid) {
-                targetIdx = i;
-                break;
-            }
+            if (draggedCenter < mid) { targetIdx = i; break; }
         }
 
-        // Reorder
-        const orderedIds = positions.map(p => p.device.id);
+        const orderedIds = [...idList];
         const [removed] = orderedIds.splice(draggedIdx, 1);
         if (targetIdx > draggedIdx) targetIdx--;
         orderedIds.splice(targetIdx, 0, removed);
 
-        this.deviceOrder = orderedIds;
+        if (drag.side === 'left') this.leftDeviceIds = orderedIds;
+        else this.rightDeviceIds = orderedIds;
+
+        this.renderChips();
         this.render();
+        this.pushUrlState();
     }
 
     // ========== Cable Management ==========
@@ -1283,10 +1148,8 @@ class CablePatcher {
         const isMulti = event && (event.ctrlKey || event.metaKey);
 
         if (isMulti) {
-            // Multi-select: toggle this cable in the selection
             const idx = this.selectedCables.findIndex(c => c.id === cable.id);
             if (idx !== -1) {
-                // Deselect it
                 this.selectedCables.splice(idx, 1);
                 const p = document.querySelector(`path[data-cable-id="${cable.id}"]`);
                 if (p) p.classList.remove('selected');
@@ -1295,23 +1158,18 @@ class CablePatcher {
                 const p = document.querySelector(`path[data-cable-id="${cable.id}"]`);
                 if (p) p.classList.add('selected');
             }
-
-            // Also add the previously single-selected cable to multi-select if needed
             if (this.selectedCable && !this.selectedCables.find(c => c.id === this.selectedCable.id)) {
                 this.selectedCables.push(this.selectedCable);
             }
             this.selectedCable = null;
         } else {
-            // Single select: clear multi-select and previous selection
             this.clearCableSelection();
             this.selectedCable = cable;
             this.selectedCables = [];
-
             const path = document.querySelector(`path[data-cable-id="${cable.id}"]`);
             if (path) path.classList.add('selected');
         }
 
-        // Update the info panel
         this.updateCableInfoPanel();
     }
 
@@ -1321,7 +1179,6 @@ class CablePatcher {
         const multiCount = document.getElementById('cable-multi-count');
 
         if (this.selectedCables.length > 1) {
-            // Multi-select view
             document.getElementById('cable-from').textContent = '-';
             document.getElementById('cable-to').textContent = '-';
             document.getElementById('cable-type').textContent = '-';
@@ -1331,16 +1188,11 @@ class CablePatcher {
             multiCount.textContent = `${this.selectedCables.length} cables selected`;
             panel.style.display = 'block';
         } else {
-            // Single cable view
             const cable = this.selectedCable || (this.selectedCables.length === 1 ? this.selectedCables[0] : null);
-            if (!cable) {
-                panel.style.display = 'none';
-                return;
-            }
+            if (!cable) { panel.style.display = 'none'; return; }
 
             const aTerms = cable.a_terminations || [];
             const bTerms = cable.b_terminations || [];
-
             document.getElementById('cable-from').textContent =
                 aTerms.length > 0 ? `${aTerms[0].device_name} - ${aTerms[0].name}` : 'Unknown';
             document.getElementById('cable-to').textContent =
@@ -1386,17 +1238,12 @@ class CablePatcher {
     }
 
     async createCable() {
-        console.log('createCable called, pendingData:', this._pendingCableData);
-        if (!this._pendingCableData) {
-            console.log('No pending cable data, returning');
-            return;
-        }
+        if (!this._pendingCableData) return;
 
         const cableType = document.getElementById('cable-type-select').value;
         const color = document.getElementById('cable-color-input').value.replace('#', '');
         const label = document.getElementById('cable-label-input').value;
 
-        // Build plugin cable API payload (server will map to NetBox models)
         const cableData = {
             a_termination_type: this._pendingCableData.a_termination_type,
             a_termination_id: this._pendingCableData.a_termination_id,
@@ -1404,57 +1251,32 @@ class CablePatcher {
             b_termination_id: this._pendingCableData.b_termination_id,
             status: 'connected'
         };
-
         if (cableType) cableData.type = cableType;
         if (color) cableData.color = color;
         if (label) cableData.label = label;
 
-        console.log('Posting cable data:', cableData);
-
         try {
-            const cable = await this.apiPost('cables/', cableData);
-            console.log('Cable created:', cable);
-
-            // Close modal
-            console.log('Hiding modal...');
+            await this.apiPost('cables/', cableData);
             this.hideModal('create-cable-modal');
-            console.log('Modal hidden');
-
-            // Clear form
             document.getElementById('cable-type-select').value = '';
             document.getElementById('cable-color-input').value = '#000000';
             document.getElementById('cable-label-input').value = '';
             this._pendingCableData = null;
-
-            // Reload to get updated port statuses
-            this.reloadCurrentView();
-
+            await this.loadCablesAndRender();
         } catch (error) {
             alert('Failed to create cable: ' + error.message);
         }
     }
 
     async deleteSelectedCable() {
-        // If multi-select is active, delegate to bulk delete
-        if (this.selectedCables.length > 0) {
-            return this.deleteSelectedCables();
-        }
-
+        if (this.selectedCables.length > 0) return this.deleteSelectedCables();
         if (!this.selectedCable) return;
-
         if (!confirm('Are you sure you want to delete this cable?')) return;
-
         try {
             await this.apiDelete(`cables/${this.selectedCable.id}/`);
-
-            // Remove from local state
             this.cables = this.cables.filter(c => c.id !== this.selectedCable.id);
-
             this.closeCablePanel();
-
-            // Reload to get updated port statuses
-            this.reloadCurrentView();
-
+            await this.loadCablesAndRender();
         } catch (error) {
             alert('Failed to delete cable: ' + error.message);
         }
@@ -1462,36 +1284,18 @@ class CablePatcher {
 
     async deleteSelectedCables() {
         if (this.selectedCables.length === 0) return;
-
         const count = this.selectedCables.length;
         if (!confirm(`Are you sure you want to delete ${count} cable(s)?`)) return;
-
         try {
             const ids = this.selectedCables.map(c => c.id);
             for (const id of ids) {
                 await this.apiDelete(`cables/${id}/`);
                 this.cables = this.cables.filter(c => c.id !== id);
             }
-
             this.closeCablePanel();
-            this.reloadCurrentView();
-
+            await this.loadCablesAndRender();
         } catch (error) {
             alert('Failed to delete cables: ' + error.message);
-        }
-    }
-
-    async reloadCurrentView() {
-        const rackId = document.getElementById('rack-select').value;
-        const locationId = document.getElementById('location-select').value;
-        const siteId = document.getElementById('site-select').value;
-
-        if (rackId) {
-            await this.loadDevices({ rack: rackId });
-        } else if (locationId) {
-            await this.loadDevices({ location: locationId });
-        } else if (siteId) {
-            await this.loadDevices({ site: siteId });
         }
     }
 
@@ -1510,21 +1314,8 @@ class CablePatcher {
 
     showError(message) {
         console.error(message);
-
-        // Try to use NetBox's toast notification system if available
-        if (typeof htmx !== 'undefined' && htmx.trigger) {
-            // NetBox uses htmx for toast notifications
-            htmx.trigger(document.body, 'htmx:showToast', {
-                message: message,
-                level: 'danger'
-            });
-            return;
-        }
-
-        // Fallback: Create a Bootstrap toast if available
-        const toastContainer = document.querySelector('.toast-container') ||
-            this.createToastContainer();
-
+        const Toast = window.bootstrap?.Toast || globalThis.bootstrap?.Toast;
+        const toastContainer = document.querySelector('.toast-container') || this.createToastContainer();
         const toastEl = document.createElement('div');
         toastEl.className = 'toast align-items-center text-bg-danger border-0';
         toastEl.setAttribute('role', 'alert');
@@ -1537,11 +1328,7 @@ class CablePatcher {
                         data-bs-dismiss="toast" aria-label="Close"></button>
             </div>
         `;
-
         toastContainer.appendChild(toastEl);
-
-        // Try Bootstrap Toast API, fallback to manual show/hide
-        const Toast = window.bootstrap?.Toast || globalThis.bootstrap?.Toast;
         if (Toast) {
             new Toast(toastEl, { autohide: true, delay: 5000 }).show();
         } else {

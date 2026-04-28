@@ -1,5 +1,111 @@
 /* Cable Patcher Styles */
 
+/* ========== Device Panel Selectors (header UI) ========== */
+
+.device-panel-selector {
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: #f8f9fa;
+    min-height: 80px;
+}
+
+.device-panel-selector--left {
+    border-left: 3px solid #0d6efd;
+}
+
+.device-panel-selector--right {
+    border-left: 3px solid #198754;
+}
+
+.device-panel-selector__header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.device-panel-selector__label {
+    font-weight: 600;
+    font-size: 14px;
+}
+
+/* Device chips */
+.device-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-height: 24px;
+}
+
+.device-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border-radius: 20px;
+    padding: 2px 8px 2px 10px;
+    font-size: 12px;
+    font-weight: 500;
+    max-width: 200px;
+    border: 1px solid transparent;
+}
+
+.device-chip--left {
+    background: #e7f1ff;
+    border-color: #b6d4fe;
+    color: #084298;
+}
+
+.device-chip--right {
+    background: #d1e7dd;
+    border-color: #a3cfbb;
+    color: #0a3622;
+}
+
+.device-chip__name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 150px;
+}
+
+.device-chip__remove {
+    background: none;
+    border: none;
+    padding: 0 3px;
+    line-height: 1;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    opacity: 1;
+    flex-shrink: 0;
+    color: inherit;
+}
+
+.device-chip__remove:hover {
+    opacity: 0.7;
+}
+
+/* ========== Dark mode support for chips ========== */
+@media (prefers-color-scheme: dark) {
+    .device-panel-selector {
+        background: #2d3239;
+        border-color: #495057;
+    }
+
+    .device-chip--left {
+        background: #1a3a5c;
+        border-color: #0d6efd;
+        color: #b6d4fe;
+    }
+
+    .device-chip--right {
+        background: #0a3622;
+        border-color: #198754;
+        color: #a3cfbb;
+    }
+}
+
+/* ========== Main container ========== */
 /* Main container */
 #patcher-container {
     position: relative;
@@ -45,25 +151,62 @@
 }
 
 .device:hover .device-box {
-    stroke: #0d6efd;
-    filter: drop-shadow(0 4px 8px rgba(13,110,253,0.2));
+    filter: drop-shadow(0 4px 8px rgba(0,0,0,0.15));
 }
 
-.device.primary .device-box {
+/* Left devices: blue accent */
+.device--left .device-box,
+.device-box--left {
     stroke: #0d6efd;
-    stroke-width: 3;
+    stroke-width: 2;
+}
+
+.device--left:hover .device-box,
+.device--left:hover .device-box--left {
+    stroke: #0b5ed7;
+    filter: drop-shadow(0 4px 8px rgba(13,110,253,0.25));
+}
+
+/* Right devices: green accent */
+.device--right .device-box,
+.device-box--right {
+    stroke: #198754;
+    stroke-width: 2;
+}
+
+.device--right:hover .device-box,
+.device--right:hover .device-box--right {
+    stroke: #157347;
+    filter: drop-shadow(0 4px 8px rgba(25,135,84,0.25));
 }
 
 .device-header {
     fill: #f8f9fa;
 }
 
+/* Left device header: light blue tint */
+.device--left .device-header,
+.device-header--left {
+    fill: #e7f1ff;
+}
+
+/* Right device header: light green tint */
+.device--right .device-header,
+.device-header--right {
+    fill: #d1e7dd;
+}
+
+/* Legacy primary class (kept for compatibility) */
+.device.primary .device-box {
+    stroke: #0d6efd;
+    stroke-width: 3;
+}
 .device.primary .device-header {
     fill: #e7f1ff;
 }
 
 /* Draggable device headers */
-.device:not(.primary) .device-header {
+.device .device-header {
     cursor: grab;
 }
 
@@ -96,6 +239,11 @@
 
 .port.connected {
     cursor: pointer;
+    opacity: 0.6;
+}
+
+.port.connected:hover {
+    opacity: 0.85;
 }
 
 .port.connecting {
@@ -113,6 +261,10 @@
     font-size: 11px;
     fill: #495057;
     pointer-events: none;
+}
+
+.port-label--connected {
+    opacity: 0.6;
 }
 
 /* Cables */
@@ -293,28 +445,55 @@
     padding: 0.375rem;
 }
 
-/* Dark mode support */
-@media (prefers-color-scheme: dark) {
-    .device-box {
-        fill: #2d3239;
-        stroke: #495057;
-    }
+/* Dark mode support (NetBox uses data-bs-theme="dark" on <html>) */
+[data-bs-theme="dark"] .device-box {
+    fill: #2d3239;
+    stroke: #495057;
+}
 
-    .device-header {
-        fill: #343a40;
-    }
+[data-bs-theme="dark"] .device-box--left {
+    stroke: #0d6efd;
+}
 
-    .device.primary .device-header {
-        fill: #1a3a5c;
-    }
+[data-bs-theme="dark"] .device-box--right {
+    stroke: #198754;
+}
 
-    .device-name {
-        fill: #f8f9fa;
-    }
+[data-bs-theme="dark"] .device-header {
+    fill: #343a40;
+}
 
-    .port-label {
-        fill: #adb5bd;
-    }
+[data-bs-theme="dark"] .device-header--left {
+    fill: #1a3a5c;
+}
+
+[data-bs-theme="dark"] .device-header--right {
+    fill: #0a3622;
+}
+
+[data-bs-theme="dark"] .device-name {
+    fill: #f8f9fa;
+}
+
+[data-bs-theme="dark"] .port-label {
+    fill: #adb5bd;
+}
+
+[data-bs-theme="dark"] .device-panel-selector {
+    background: #2d3239;
+    border-color: #495057;
+}
+
+[data-bs-theme="dark"] .device-chip--left {
+    background: #1a3a5c;
+    border-color: #0d6efd;
+    color: #b6d4fe;
+}
+
+[data-bs-theme="dark"] .device-chip--right {
+    background: #0a3622;
+    border-color: #198754;
+    color: #a3cfbb;
 }
 
 /* Responsive adjustments */
