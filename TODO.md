@@ -9,23 +9,22 @@
 - [x] Site / Location / Rack cascading filter (AJAX, no page reload)
 - [x] Left/right device selectors with chip/badge list and × remove button
 - [x] URL state persistence (site, location, rack, mode, left device IDs, right device IDs)
-- [ ] Draw SVG cables between connected ports (bezier curves — code present, needs end-to-end test)
-- [ ] Click port → highlight connected port on another device
-- [ ] Create/delete cables from the UI (POST/DELETE to NetBox API — wired up, needs test)
+- [x] Draw SVG cables between connected ports (bezier curves — code present, needs end-to-end test)
+- [x] Click port → highlight connected port on another device
+- [x] Create/delete cables from the UI (POST/DELETE to NetBox API — wired up, needs test)
 
 ## v0.2
-- [ ] Save/load canvas layout (localStorage or plugin model)
-- [ ] Color-code cables by type or status
-- [ ] Search/filter ports within a device card
-- [ ] Allow a device to appear on both left and right sides (useful for patch panels)
+- [x] Save/load canvas layout (URL state persistence)
+- [x] Color-code cables by type or status
+- [x] Cable defaults bar with type, color, label, and quick-patch toggle
 
 ## v0.3
-- [ ] Rear port / front port support (patch panel visualization)
-- [ ] Bulk cable operations
-- [ ] Export diagram (PNG/SVG)
+- [ ] Rear port / front port support (patch panel visualization) -- not sure if it's done?
+- [ ] Module Bays visualization: show  modules as an outline to help highlight what portions of the device are modular
+- [ ] Module Bays population -- ability to fill module bays easily by typing in a search box.allow module installation from the patcher UI
+
 
 ## Future Ideas
-- [ ] Module Bays visualization: show empty module bay slots in device cards, allow module installation from the patcher UI
-- [ ] WebSocket live-update when cables change
-- [ ] Role-based permissions for cable changes
-- [ ] Integration with NetBox rack elevation view
+
+- [ ] Bulk cable operations 
+- [ ] Export diagram (PNG/SVG)
