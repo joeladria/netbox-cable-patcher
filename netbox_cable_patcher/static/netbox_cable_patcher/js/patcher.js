@@ -29,6 +29,7 @@ class CablePatcher {
         this.selectedCable = null;
         this.selectedCables = [];
         this.pendingConnection = null;
+        this.quickPatchMode = true;
 
         // Drag state for device reordering within a column
         this.draggingDevice = null;
@@ -251,6 +252,11 @@ class CablePatcher {
         // Cable panel
         addListener('close-cable-panel', 'click', () => this.closeCablePanel());
         addListener('delete-cable-btn', 'click', () => this.deleteSelectedCable());
+
+        // Quick-patch toggle
+        addListener('quick-patch-toggle', 'change', (e) => {
+            this.quickPatchMode = e.target.checked;
+        });
 
         // Create cable modal
         addListener('create-cable-btn', 'click', () => this.createCable());
@@ -571,6 +577,8 @@ class CablePatcher {
 
     clearAllDevices() {
         if (this.leftDeviceIds.length === 0 && this.rightDeviceIds.length === 0) return;
+        this.cancelPendingConnection();
+        this.closeCablePanel();
         this.leftDeviceIds = [];
         this.rightDeviceIds = [];
         this.cables = [];
@@ -593,8 +601,27 @@ class CablePatcher {
 
     onModeChange(e) {
         this.currentMode = e.target.value;
+        this.syncCableDefaultsToMode();
         this.render();
         this.pushUrlState();
+    }
+
+    /**
+     * Update the cable defaults bar to match the current mode.
+     */
+    syncCableDefaultsToMode() {
+        const modeDefaults = {
+            network: { type: 'cat6',  color: '#3498db' },
+            power:   { type: 'power', color: '#e74c3c' },
+            console: { type: '',      color: '#2ecc71' },
+        };
+        const defaults = modeDefaults[this.currentMode] || modeDefaults.network;
+
+        const typeEl = document.getElementById('default-cable-type');
+        if (typeEl) typeEl.value = defaults.type;
+
+        const colorEl = document.getElementById('default-cable-color');
+        if (colorEl) colorEl.value = defaults.color;
     }
 
     // ========== Device Chips UI ==========
@@ -1154,11 +1181,6 @@ class CablePatcher {
         const from = this.pendingConnection;
         const to = { port, device };
 
-        document.getElementById('cable-from-input').value =
-            `${from.device.name} - ${from.port.name}`;
-        document.getElementById('cable-to-input').value =
-            `${to.device.name} - ${to.port.name}`;
-
         this._pendingCableData = {
             a_termination_type: from.type,
             a_termination_id: from.port.id,
@@ -1166,14 +1188,28 @@ class CablePatcher {
             b_termination_id: to.port.id
         };
 
-        const defaultTypes = { network: 'cat6', power: 'power', console: 'cat5e' };
-        const typeSelect = document.getElementById('cable-type-select');
-        if (typeSelect && defaultTypes[this.currentMode]) {
-            typeSelect.value = defaultTypes[this.currentMode];
+        this.cancelPendingConnection();
+
+        if (this.quickPatchMode) {
+            this.createCableQuick();
+            return;
         }
 
+        document.getElementById('cable-from-input').value =
+            `${from.device.name} - ${from.port.name}`;
+        document.getElementById('cable-to-input').value =
+            `${to.device.name} - ${to.port.name}`;
+
+        // Pre-populate modal from global defaults
+        const defaults = this.readGlobalCableDefaults();
+        const typeSelect = document.getElementById('cable-type-select');
+        if (typeSelect) typeSelect.value = defaults.type;
+        const colorInput = document.getElementById('cable-color-input');
+        if (colorInput) colorInput.value = defaults.color ? '#' + defaults.color : '#000000';
+        const labelInput = document.getElementById('cable-label-input');
+        if (labelInput) labelInput.value = defaults.label;
+
         this.showModal('create-cable-modal');
-        this.cancelPendingConnection();
     }
 
     showModal(modalId) {
@@ -1408,6 +1444,55 @@ class CablePatcher {
             'ConsoleServerPort': 'dcim.consoleserverport'
         };
         return typeMap[portType] || 'dcim.interface';
+    }
+
+    /**
+     * Read cable defaults from the persistent global settings bar.
+     * When type is empty ("Auto"), falls back to a mode-based default.
+     */
+    readGlobalCableDefaults() {
+        const typeEl = document.getElementById('default-cable-type');
+        const colorEl = document.getElementById('default-cable-color');
+        const labelEl = document.getElementById('default-cable-label');
+
+        let type = typeEl ? typeEl.value : '';
+        if (!type) {
+            const modeDefaults = { network: 'cat6', power: 'power', console: '' };
+            type = modeDefaults[this.currentMode] || '';
+        }
+
+        const color = colorEl ? colorEl.value.replace('#', '') : '';
+        const label = labelEl ? labelEl.value : '';
+
+        return { type, color, label };
+    }
+
+    /**
+     * Quick-patch: create a cable immediately using global defaults, no modal.
+     */
+    async createCableQuick() {
+        if (!this._pendingCableData) return;
+
+        const defaults = this.readGlobalCableDefaults();
+        const cableData = {
+            a_termination_type: this._pendingCableData.a_termination_type,
+            a_termination_id: this._pendingCableData.a_termination_id,
+            b_termination_type: this._pendingCableData.b_termination_type,
+            b_termination_id: this._pendingCableData.b_termination_id,
+            status: 'connected'
+        };
+        if (defaults.type) cableData.type = defaults.type;
+        if (defaults.color) cableData.color = defaults.color;
+        if (defaults.label) cableData.label = defaults.label;
+
+        this._pendingCableData = null;
+
+        try {
+            await this.apiPost('cables/', cableData);
+            await this.loadCablesAndRender();
+        } catch (error) {
+            this.showError('Failed to create cable: ' + error.message);
+        }
     }
 
     async createCable() {

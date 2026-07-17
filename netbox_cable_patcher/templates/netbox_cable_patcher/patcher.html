@@ -67,7 +67,7 @@
                     </div>
 
                     <!-- Row 2: Left / Right Device Selectors -->
-                    <div class="row g-3">
+                    <div class="row g-3 mb-3">
                         <!-- Left Side Device Selector -->
                         <div class="col-md-6">
                             <div class="device-panel-selector device-panel-selector--left">
@@ -110,6 +110,64 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- Row 3: Cable Defaults -->
+                    <div class="row g-3 align-items-end">
+                        <div class="col-12">
+                            <div class="cable-defaults-bar">
+                                <div class="cable-defaults-bar__label">
+                                    <i class="mdi mdi-cable-data"></i>
+                                    Cable Defaults
+                                </div>
+                                <div class="cable-defaults-bar__fields">
+                                    <div class="cable-defaults-field">
+                                        <label class="form-label" for="default-cable-type">Type</label>
+                                        <select class="form-select form-select-sm" id="default-cable-type">
+                                            <option value="">-- Auto --</option>
+                                            <option value="cat3">CAT3</option>
+                                            <option value="cat5">CAT5</option>
+                                            <option value="cat5e">CAT5e</option>
+                                            <option value="cat6" selected>CAT6</option>
+                                            <option value="cat6a">CAT6a</option>
+                                            <option value="cat7">CAT7</option>
+                                            <option value="cat7a">CAT7a</option>
+                                            <option value="cat8">CAT8</option>
+                                            <option value="dac-active">DAC (Active)</option>
+                                            <option value="dac-passive">DAC (Passive)</option>
+                                            <option value="mmf">Multimode Fiber</option>
+                                            <option value="mmf-om1">MMF (OM1)</option>
+                                            <option value="mmf-om2">MMF (OM2)</option>
+                                            <option value="mmf-om3">MMF (OM3)</option>
+                                            <option value="mmf-om4">MMF (OM4)</option>
+                                            <option value="mmf-om5">MMF (OM5)</option>
+                                            <option value="smf">Singlemode Fiber</option>
+                                            <option value="smf-os1">SMF (OS1)</option>
+                                            <option value="smf-os2">SMF (OS2)</option>
+                                            <option value="coaxial">Coaxial</option>
+                                            <option value="power">Power</option>
+                                        </select>
+                                    </div>
+                                    <div class="cable-defaults-field">
+                                        <label class="form-label" for="default-cable-color">Color</label>
+                                        <input type="color" class="form-control form-control-sm form-control-color" id="default-cable-color" value="#3498db" title="Cable color">
+                                    </div>
+                                    <div class="cable-defaults-field cable-defaults-field--label">
+                                        <label class="form-label" for="default-cable-label">Label</label>
+                                        <input type="text" class="form-control form-control-sm" id="default-cable-label" placeholder="Optional label">
+                                    </div>
+                                </div>
+                                <div class="cable-defaults-bar__toggle">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="quick-patch-toggle" checked>
+                                        <label class="form-check-label" for="quick-patch-toggle">
+                                            Quick Patch
+                                        </label>
+                                    </div>
+                                    <small class="text-muted d-block">Skip confirmation dialog</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -128,14 +186,14 @@
                             <i class="mdi mdi-close-circle"></i> Clear
                         </button>
                         <div class="btn-group btn-group-sm">
-                            <button type="button" class="btn btn-outline-secondary" id="zoom-in" title="Zoom In">
-                                <i class="mdi mdi-magnify-plus"></i>
+                            <button type="button" class="btn btn-outline-secondary" id="zoom-out" title="Zoom Out">
+                                <i class="mdi mdi-magnify-minus"></i>
                             </button>
                             <button type="button" class="btn btn-outline-secondary" id="zoom-reset" title="Reset Zoom">
                                 <i class="mdi mdi-magnify"></i> 100%
                             </button>
-                            <button type="button" class="btn btn-outline-secondary" id="zoom-out" title="Zoom Out">
-                                <i class="mdi mdi-magnify-minus"></i>
+                            <button type="button" class="btn btn-outline-secondary" id="zoom-in" title="Zoom In">
+                                <i class="mdi mdi-magnify-plus"></i>
                             </button>
                         </div>
                     </div>

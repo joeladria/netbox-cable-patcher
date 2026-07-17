@@ -100,24 +100,98 @@
     opacity: 0.7;
 }
 
-/* ========== Dark mode support for chips ========== */
-@media (prefers-color-scheme: dark) {
-    .device-panel-selector {
-        background: #2d3239;
-        border-color: #495057;
-    }
+/* ========== Cable Defaults Bar ========== */
 
-    .device-chip--left {
-        background: #1a3a5c;
-        border-color: #0d6efd;
-        color: #b6d4fe;
-    }
+.cable-defaults-bar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    padding: 8px 14px;
+    background: #f8f9fa;
+}
 
-    .device-chip--right {
-        background: #0a3622;
-        border-color: #198754;
-        color: #a3cfbb;
-    }
+.cable-defaults-bar__label {
+    font-weight: 600;
+    font-size: 13px;
+    white-space: nowrap;
+    color: #495057;
+}
+
+.cable-defaults-bar__label .mdi {
+    margin-right: 4px;
+}
+
+.cable-defaults-bar__fields {
+    display: flex;
+    align-items: flex-end;
+    gap: 12px;
+    flex: 1 1 auto;
+}
+
+.cable-defaults-field {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.cable-defaults-field .form-label {
+    font-size: 11px;
+    margin-bottom: 0;
+    color: #6c757d;
+    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+}
+
+.cable-defaults-field .form-select-sm,
+.cable-defaults-field .form-control-sm {
+    min-width: 120px;
+}
+
+.cable-defaults-field .form-control-color {
+    width: 46px;
+    min-width: 46px;
+    padding: 0.25rem;
+}
+
+.cable-defaults-field--label {
+    flex: 0 1 180px;
+}
+
+.cable-defaults-bar__toggle {
+    white-space: nowrap;
+    text-align: center;
+    padding-left: 12px;
+    border-left: 1px solid #dee2e6;
+}
+
+.cable-defaults-bar__toggle .form-check-label {
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.cable-defaults-bar__toggle small {
+    font-size: 11px;
+}
+
+/* Dark mode for cable defaults bar */
+[data-bs-theme="dark"] .cable-defaults-bar {
+    background: #2d3239;
+    border-color: #495057;
+}
+
+[data-bs-theme="dark"] .cable-defaults-bar__label {
+    color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .cable-defaults-field .form-label {
+    color: #9ea7b0;
+}
+
+[data-bs-theme="dark"] .cable-defaults-bar__toggle {
+    border-left-color: #495057;
 }
 
 /* ========== Main container ========== */
@@ -531,6 +605,19 @@
     background: #0a3622;
     border-color: #198754;
     color: #a3cfbb;
+}
+
+[data-bs-theme="dark"] .form-select:disabled {
+    background-color: #343a40;
+    color: #adb5bd;
+}
+
+[data-bs-theme="dark"] .device-panel-selector__label {
+    color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .device-panel-selector__label .text-muted {
+    color: #9ea7b0 !important;
 }
 
 /* Responsive adjustments */
