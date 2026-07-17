@@ -142,9 +142,16 @@ class CablesViewSet(ViewSet):
         if device_ids:
             # Get cables connected to any of the specified devices.
             # Restrict to devices the user can view to prevent data leakage.
+            try:
+                device_id_ints = [int(d) for d in device_ids]
+            except (ValueError, TypeError):
+                return Response(
+                    {'error': 'Invalid device ID. All device_ids must be integers.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             device_ids = list(
                 Device.objects.restrict(request.user, 'view')
-                .filter(id__in=[int(d) for d in device_ids])
+                .filter(id__in=device_id_ints)
                 .values_list('id', flat=True)
             )
         elif rack_id:
@@ -165,8 +172,9 @@ class CablesViewSet(ViewSet):
         # Check all termination types
         for model_name, model in TERMINATION_MODELS.items():
             ct = ContentType.objects.get_for_model(model)
-            # Get terminations belonging to our devices
-            termination_ids = list(model.objects.filter(
+            # Get terminations belonging to our devices (restrict enforces
+            # object-level permissions on the termination objects themselves).
+            termination_ids = list(model.objects.restrict(request.user, 'view').filter(
                 device_id__in=device_ids
             ).values_list('id', flat=True))
 
@@ -220,14 +228,9 @@ class CablesViewSet(ViewSet):
             )
 
         # Check if either port is already connected
-        if a_term.cable:
+        if a_term.cable or b_term.cable:
             return Response(
-                {'error': f'{a_term.name} is already connected'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        if b_term.cable:
-            return Response(
-                {'error': f'{b_term.name} is already connected'},
+                {'error': 'One or both ports are already connected.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -265,6 +268,17 @@ class CablesViewSet(ViewSet):
                 cable.refresh_from_db()
                 cable.full_clean()
 
+                # Verify object-level permission constraints (e.g. "user may
+                # only add cables in site X").  The model-level has_perm()
+                # check above does not evaluate these constraints.
+                if not request.user.has_perm('dcim.add_cable', obj=cable):
+                    raise PermissionError()
+
+        except PermissionError:
+            return Response(
+                {'error': 'Permission denied. You do not have permission to create this cable.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
         except DjangoValidationError as exc:
             # Flatten the error messages from Django's ValidationError
             messages = []

@@ -1,15 +1,9 @@
-from netbox.plugins import PluginMenu, PluginMenuItem, PluginMenuButton
+from netbox.plugins import PluginMenuItem
 
-menu = PluginMenu(
-    label='Cable Patcher',
-    groups=(
-        ('', (
-            PluginMenuItem(
-                link='plugins:netbox_cable_patcher:patcher',
-                link_text='Patch Bay View',
-                permissions=['dcim.view_cable'],
-            ),
-        )),
+menu_items = (
+    PluginMenuItem(
+        link='plugins:netbox_cable_patcher:patcher',
+        link_text='Cable Patcher',
+        permissions=['dcim.view_cable'],
     ),
-    icon_class='mdi mdi-cable-data'
 )
