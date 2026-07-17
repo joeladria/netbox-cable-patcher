@@ -38,17 +38,18 @@ class LocationsViewSet(ViewSet):
 
     def list(self, request):
         """Get all sites with their locations and racks."""
-        # Use prefetch_related to avoid N+1 queries
-        sites = Site.objects.prefetch_related(
+        # Use prefetch_related to avoid N+1 queries.
+        # restrict() enforces object-level permissions (incl. tenant restrictions).
+        sites = Site.objects.restrict(request.user, 'view').prefetch_related(
             Prefetch(
                 'locations',
-                queryset=Location.objects.prefetch_related(
-                    Prefetch('racks', queryset=Rack.objects.order_by('name'))
+                queryset=Location.objects.restrict(request.user, 'view').prefetch_related(
+                    Prefetch('racks', queryset=Rack.objects.restrict(request.user, 'view').order_by('name'))
                 ).order_by('name')
             ),
             Prefetch(
                 'racks',
-                queryset=Rack.objects.filter(location__isnull=True).order_by('name'),
+                queryset=Rack.objects.restrict(request.user, 'view').filter(location__isnull=True).order_by('name'),
                 to_attr='site_level_racks'
             )
         ).order_by('name')
@@ -102,7 +103,7 @@ class DevicesViewSet(ViewSet):
         location_id = request.query_params.get('location')
         site_id = request.query_params.get('site')
 
-        devices = Device.objects.all()
+        devices = Device.objects.restrict(request.user, 'view')
 
         if rack_id:
             devices = devices.filter(rack_id=rack_id)
@@ -139,14 +140,19 @@ class CablesViewSet(ViewSet):
         device_ids = request.query_params.getlist('device_ids[]')
 
         if device_ids:
-            # Get cables connected to any of the specified devices
-            device_ids = [int(d) for d in device_ids]
+            # Get cables connected to any of the specified devices.
+            # Restrict to devices the user can view to prevent data leakage.
+            device_ids = list(
+                Device.objects.restrict(request.user, 'view')
+                .filter(id__in=[int(d) for d in device_ids])
+                .values_list('id', flat=True)
+            )
         elif rack_id:
-            device_ids = list(Device.objects.filter(rack_id=rack_id).values_list('id', flat=True))
+            device_ids = list(Device.objects.restrict(request.user, 'view').filter(rack_id=rack_id).values_list('id', flat=True))
         elif location_id:
-            device_ids = list(Device.objects.filter(rack__location_id=location_id).values_list('id', flat=True))
+            device_ids = list(Device.objects.restrict(request.user, 'view').filter(rack__location_id=location_id).values_list('id', flat=True))
         elif site_id:
-            device_ids = list(Device.objects.filter(site_id=site_id).values_list('id', flat=True))
+            device_ids = list(Device.objects.restrict(request.user, 'view').filter(site_id=site_id).values_list('id', flat=True))
         else:
             return Response({'error': 'Please specify rack, location, site, or device_ids'}, status=400)
 
@@ -172,7 +178,7 @@ class CablesViewSet(ViewSet):
                 ).values_list('cable_id', flat=True)
                 cables.update(cable_ids)
 
-        cable_objects = Cable.objects.filter(id__in=cables).prefetch_related(
+        cable_objects = Cable.objects.restrict(request.user, 'view').filter(id__in=cables).prefetch_related(
             'terminations'
         )
 
@@ -205,8 +211,8 @@ class CablesViewSet(ViewSet):
             )
 
         try:
-            a_term = a_model.objects.get(id=data['a_termination_id'])
-            b_term = b_model.objects.get(id=data['b_termination_id'])
+            a_term = a_model.objects.restrict(request.user, 'view').get(id=data['a_termination_id'])
+            b_term = b_model.objects.restrict(request.user, 'view').get(id=data['b_termination_id'])
         except (a_model.DoesNotExist, b_model.DoesNotExist):
             return Response(
                 {'error': 'Termination not found'},
@@ -284,7 +290,7 @@ class CablesViewSet(ViewSet):
             )
 
         try:
-            cable = Cable.objects.get(pk=pk)
+            cable = Cable.objects.restrict(request.user, 'delete').get(pk=pk)
         except Cable.DoesNotExist:
             return Response(
                 {'error': 'Cable not found'},

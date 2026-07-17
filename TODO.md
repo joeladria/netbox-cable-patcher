@@ -25,6 +25,7 @@
 - [ ] Export diagram (PNG/SVG)
 
 ## Future Ideas
+- [ ] Module Bays visualization: show empty module bay slots in device cards, allow module installation from the patcher UI
 - [ ] WebSocket live-update when cables change
 - [ ] Role-based permissions for cable changes
 - [ ] Integration with NetBox rack elevation view
