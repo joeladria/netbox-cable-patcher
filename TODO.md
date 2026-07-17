@@ -19,9 +19,9 @@
 - [x] Cable defaults bar with type, color, label, and quick-patch toggle
 
 ## v0.3
-- [ ] Rear port / front port support (patch panel visualization) -- not sure if it's done?
-- [ ] Module Bays visualization: show  modules as an outline to help highlight what portions of the device are modular
-- [ ] Module Bays population -- ability to fill module bays easily by typing in a search box.allow module installation from the patcher UI
+- [x] Rear port / front port support in network mode
+- [x] Module Bays visualization: modules shown as outlined sections within device cards
+- [x] Module Bays population: install/uninstall modules from the patcher UI with search
 
 
 ## Future Ideas

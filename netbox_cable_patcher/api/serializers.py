@@ -2,7 +2,8 @@ from rest_framework import serializers
 from dcim.models import (
     Site, Location, Rack, Device, Interface,
     FrontPort, RearPort, PowerPort, PowerOutlet,
-    ConsolePort, ConsoleServerPort, Cable
+    ConsolePort, ConsoleServerPort, Cable,
+    ModuleBay, Module, ModuleType
 )
 
 
@@ -32,6 +33,7 @@ class PortSerializer(serializers.Serializer):
     cable_id = serializers.SerializerMethodField()
     connected_endpoint = serializers.SerializerMethodField()
     port_type = serializers.SerializerMethodField()
+    module_bay_id = serializers.SerializerMethodField()
 
     def get_cable_id(self, obj):
         if hasattr(obj, 'cable') and obj.cable:
@@ -62,6 +64,50 @@ class PortSerializer(serializers.Serializer):
             return obj.untagged_vlan.vid
         return None
 
+    def get_module_bay_id(self, obj):
+        if hasattr(obj, 'module') and obj.module:
+            return obj.module.module_bay_id
+        return None
+
+
+class ModuleBaySerializer(serializers.Serializer):
+    """Serializer for module bay data within a device."""
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    position = serializers.CharField(allow_null=True, required=False)
+    label = serializers.CharField(allow_blank=True, required=False)
+    installed_module = serializers.SerializerMethodField()
+
+    def get_installed_module(self, obj):
+        if not hasattr(obj, 'installed_module') or not obj.installed_module:
+            return None
+        mod = obj.installed_module
+        return {
+            'id': mod.id,
+            'module_type': {
+                'id': mod.module_type_id,
+                'model': mod.module_type.model,
+                'manufacturer': mod.module_type.manufacturer.name,
+            },
+            'status': mod.status,
+        }
+
+
+class ModuleTypeSearchSerializer(serializers.ModelSerializer):
+    """Serializer for module type search results."""
+    manufacturer_name = serializers.CharField(source='manufacturer.name', read_only=True)
+
+    class Meta:
+        model = ModuleType
+        fields = ['id', 'model', 'manufacturer_name', 'description', 'part_number']
+
+
+class ModuleInstallSerializer(serializers.Serializer):
+    """Serializer for validating module installation requests."""
+    module_type_id = serializers.IntegerField()
+    serial = serializers.CharField(required=False, allow_blank=True, default='')
+    asset_tag = serializers.CharField(required=False, allow_blank=True, allow_null=True, default=None)
+
 
 class DeviceWithPortsSerializer(serializers.ModelSerializer):
     interfaces = serializers.SerializerMethodField()
@@ -71,13 +117,15 @@ class DeviceWithPortsSerializer(serializers.ModelSerializer):
     rear_ports = serializers.SerializerMethodField()
     console_ports = serializers.SerializerMethodField()
     console_server_ports = serializers.SerializerMethodField()
+    module_bays = serializers.SerializerMethodField()
 
     class Meta:
         model = Device
         fields = [
             'id', 'name', 'device_type', 'rack', 'position',
             'interfaces', 'power_ports', 'power_outlets',
-            'front_ports', 'rear_ports', 'console_ports', 'console_server_ports'
+            'front_ports', 'rear_ports', 'console_ports', 'console_server_ports',
+            'module_bays'
         ]
 
     def get_interfaces(self, obj):
@@ -102,6 +150,9 @@ class DeviceWithPortsSerializer(serializers.ModelSerializer):
 
     def get_console_server_ports(self, obj):
         return PortSerializer(obj.consoleserverports.all(), many=True).data
+
+    def get_module_bays(self, obj):
+        return ModuleBaySerializer(obj.modulebays.all(), many=True).data
 
 
 class CableSerializer(serializers.ModelSerializer):

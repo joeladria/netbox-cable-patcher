@@ -12,12 +12,14 @@ from dcim.choices import LinkStatusChoices
 from dcim.models import (
     Site, Location, Rack, Device, Interface,
     FrontPort, RearPort, PowerPort, PowerOutlet,
-    ConsolePort, ConsoleServerPort, Cable, CableTermination
+    ConsolePort, ConsoleServerPort, Cable, CableTermination,
+    ModuleBay, Module, ModuleType
 )
 
 from .serializers import (
     SiteSerializer, LocationSerializer, RackSerializer,
-    DeviceWithPortsSerializer, CableSerializer, CableCreateSerializer
+    DeviceWithPortsSerializer, CableSerializer, CableCreateSerializer,
+    ModuleTypeSearchSerializer, ModuleInstallSerializer, ModuleBaySerializer
 )
 
 
@@ -115,13 +117,18 @@ class DevicesViewSet(ViewSet):
             return Response({'error': 'Please specify rack, location, or site'}, status=400)
 
         devices = devices.select_related('device_type', 'rack').prefetch_related(
-            Prefetch('interfaces', queryset=Interface.objects.select_related('untagged_vlan')),
-            'powerports',
-            'poweroutlets',
-            'frontports',
-            'rearports',
-            'consoleports',
-            'consoleserverports',
+            Prefetch('interfaces', queryset=Interface.objects.select_related(
+                'untagged_vlan', 'module'
+            )),
+            Prefetch('powerports', queryset=PowerPort.objects.select_related('module')),
+            Prefetch('poweroutlets', queryset=PowerOutlet.objects.select_related('module')),
+            Prefetch('frontports', queryset=FrontPort.objects.select_related('module')),
+            Prefetch('rearports', queryset=RearPort.objects.select_related('module')),
+            Prefetch('consoleports', queryset=ConsolePort.objects.select_related('module')),
+            Prefetch('consoleserverports', queryset=ConsoleServerPort.objects.select_related('module')),
+            Prefetch('modulebays', queryset=ModuleBay.objects.select_related(
+                'installed_module__module_type__manufacturer'
+            ).order_by('position', 'name')),
         ).order_by('name')
 
         serializer = DeviceWithPortsSerializer(devices, many=True)
@@ -312,4 +319,144 @@ class CablesViewSet(ViewSet):
             )
 
         cable.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ModuleTypesViewSet(ViewSet):
+    """API endpoint for searching module types."""
+    permission_classes = [IsAuthenticatedOrLoginNotRequired]
+
+    def list(self, request):
+        """Search module types by query string."""
+        q = request.query_params.get('q', '').strip()
+        if not q:
+            return Response([])
+
+        qs = ModuleType.objects.select_related('manufacturer').filter(
+            model__icontains=q
+        ).order_by('manufacturer__name', 'model')[:50]
+
+        serializer = ModuleTypeSearchSerializer(qs, many=True)
+        return Response(serializer.data)
+
+
+class ModuleBaysViewSet(ViewSet):
+    """API endpoint for module bay operations (install/uninstall modules)."""
+    permission_classes = [IsAuthenticatedOrLoginNotRequired]
+
+    @action(detail=True, methods=['post'])
+    def install(self, request, pk=None):
+        """Install a module into a module bay."""
+        if not request.user.has_perm('dcim.add_module'):
+            return Response(
+                {'error': 'Permission denied. You do not have permission to install modules.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        try:
+            module_bay = ModuleBay.objects.select_related(
+                'installed_module', 'device'
+            ).get(pk=pk)
+        except ModuleBay.DoesNotExist:
+            return Response(
+                {'error': 'Module bay not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Check user can view the parent device
+        if not Device.objects.restrict(request.user, 'view').filter(pk=module_bay.device_id).exists():
+            return Response(
+                {'error': 'Module bay not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if hasattr(module_bay, 'installed_module') and module_bay.installed_module:
+            return Response(
+                {'error': 'This module bay already has a module installed.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        serializer = ModuleInstallSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        data = serializer.validated_data
+
+        try:
+            module_type = ModuleType.objects.get(pk=data['module_type_id'])
+        except ModuleType.DoesNotExist:
+            return Response(
+                {'error': 'Module type not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        try:
+            with transaction.atomic():
+                module = Module(
+                    device=module_bay.device,
+                    module_bay=module_bay,
+                    module_type=module_type,
+                    status='active',
+                    serial=data.get('serial', ''),
+                    asset_tag=data.get('asset_tag') or None,
+                )
+                module.full_clean()
+                module.save()
+        except DjangoValidationError as exc:
+            messages = []
+            if hasattr(exc, 'message_dict'):
+                for field, errs in exc.message_dict.items():
+                    messages.extend(errs)
+            else:
+                messages = list(exc.messages)
+            return Response(
+                {'error': ' '.join(messages)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Re-fetch the module bay with the installed module for response
+        module_bay.refresh_from_db()
+        module_bay = ModuleBay.objects.select_related(
+            'installed_module__module_type__manufacturer'
+        ).get(pk=pk)
+
+        return Response(
+            ModuleBaySerializer(module_bay).data,
+            status=status.HTTP_201_CREATED
+        )
+
+    @action(detail=True, methods=['post'])
+    def uninstall(self, request, pk=None):
+        """Remove a module from a module bay."""
+        if not request.user.has_perm('dcim.delete_module'):
+            return Response(
+                {'error': 'Permission denied. You do not have permission to remove modules.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        try:
+            module_bay = ModuleBay.objects.select_related(
+                'installed_module', 'device'
+            ).get(pk=pk)
+        except ModuleBay.DoesNotExist:
+            return Response(
+                {'error': 'Module bay not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Check user can view the parent device
+        if not Device.objects.restrict(request.user, 'view').filter(pk=module_bay.device_id).exists():
+            return Response(
+                {'error': 'Module bay not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if not hasattr(module_bay, 'installed_module') or not module_bay.installed_module:
+            return Response(
+                {'error': 'No module installed in this bay.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        module_bay.installed_module.delete()
+
         return Response(status=status.HTTP_204_NO_CONTENT)

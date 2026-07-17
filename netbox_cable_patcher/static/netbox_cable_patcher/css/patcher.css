@@ -416,6 +416,148 @@
     pointer-events: none;
 }
 
+/* ========== Module Bay styles ========== */
+
+.module-bay-outline {
+    fill: none;
+    stroke: #6c757d;
+    stroke-width: 1;
+    stroke-dasharray: 4 2;
+    opacity: 0.5;
+}
+
+.module-bay-outline--empty {
+    stroke-dasharray: 6 3;
+    opacity: 0.35;
+}
+
+.module-bay-label {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 10px;
+    font-weight: 600;
+    fill: #6c757d;
+    pointer-events: none;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.module-bay-action {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    fill: #6c757d;
+    cursor: pointer;
+    pointer-events: all;
+}
+
+.module-bay-action:hover {
+    fill: #0d6efd;
+}
+
+.module-bay-empty-label {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 10px;
+    fill: #9ea7b0;
+    text-anchor: middle;
+    pointer-events: none;
+    font-style: italic;
+}
+
+/* Module type search results (install modal) */
+.module-type-results {
+    max-height: 250px;
+    overflow-y: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    margin-top: 4px;
+}
+
+.module-type-result {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid #f0f0f0;
+    transition: background 0.1s ease;
+}
+
+.module-type-result:last-child {
+    border-bottom: none;
+}
+
+.module-type-result:hover {
+    background: #f0f4ff;
+}
+
+.module-type-result.selected {
+    background: #e7f1ff;
+    border-color: #b6d4fe;
+}
+
+.module-type-result strong {
+    font-size: 12px;
+    color: #6c757d;
+    flex-shrink: 0;
+}
+
+.module-type-result span {
+    font-size: 13px;
+    color: #212529;
+}
+
+.module-type-result small {
+    margin-left: auto;
+    font-size: 11px;
+}
+
+/* Dark mode module bay styles */
+[data-bs-theme="dark"] .module-bay-outline {
+    stroke: #9ea7b0;
+}
+
+[data-bs-theme="dark"] .module-bay-label {
+    fill: #9ea7b0;
+}
+
+[data-bs-theme="dark"] .module-bay-action {
+    fill: #9ea7b0;
+}
+
+[data-bs-theme="dark"] .module-bay-action:hover {
+    fill: #6ea8fe;
+}
+
+[data-bs-theme="dark"] .module-bay-empty-label {
+    fill: #6c757d;
+}
+
+[data-bs-theme="dark"] .module-type-results {
+    border-color: #495057;
+    background: #2d3239;
+}
+
+[data-bs-theme="dark"] .module-type-result {
+    border-bottom-color: #495057;
+}
+
+[data-bs-theme="dark"] .module-type-result:hover {
+    background: #343a40;
+}
+
+[data-bs-theme="dark"] .module-type-result.selected {
+    background: #1a3a5c;
+    border-color: #0d6efd;
+}
+
+[data-bs-theme="dark"] .module-type-result strong {
+    color: #9ea7b0;
+}
+
+[data-bs-theme="dark"] .module-type-result span {
+    color: #f8f9fa;
+}
+
 /* Port type icons */
 .port-icon { pointer-events: none; }
 

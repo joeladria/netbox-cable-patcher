@@ -52,6 +52,9 @@ class CablePatcher {
         this.DEVICE_GAP = 30;
         this.LEFT_X = 20;
         this.CENTER_GAP = 160; // horizontal space between left column's right edge and right column's left edge
+        this.MODULE_BAY_HEADER_HEIGHT = 22;
+        this.MODULE_BAY_PADDING = 4;
+        this.MODULE_BAY_INSET = 6; // horizontal inset from device edge
 
         // Port colors by type
         this.PORT_COLORS = {
@@ -261,6 +264,21 @@ class CablePatcher {
         // Create cable modal
         addListener('create-cable-btn', 'click', () => this.createCable());
 
+        // Module install modal
+        addListener('install-module-btn', 'click', () => this.installModule());
+
+        // Module type search with debounce
+        const searchInput = document.getElementById('module-type-search');
+        if (searchInput) {
+            let searchTimeout;
+            searchInput.addEventListener('input', (e) => {
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(() => {
+                    this.searchModuleTypes(e.target.value.trim());
+                }, 300);
+            });
+        }
+
         // Modal dismiss
         document.querySelectorAll('[data-bs-dismiss="modal"]').forEach(btn => {
             btn.addEventListener('click', () => {
@@ -297,10 +315,17 @@ class CablePatcher {
                 }
             }
             if (e.key === 'Enter') {
-                const modal = document.getElementById('create-cable-modal');
-                if (modal && (modal.classList.contains('show') || modal.style.display === 'block')) {
+                const cableModal = document.getElementById('create-cable-modal');
+                if (cableModal && (cableModal.classList.contains('show') || cableModal.style.display === 'block')) {
                     e.preventDefault();
                     this.createCable();
+                }
+                const moduleModal = document.getElementById('install-module-modal');
+                if (moduleModal && (moduleModal.classList.contains('show') || moduleModal.style.display === 'block')) {
+                    if (this._selectedModuleTypeId) {
+                        e.preventDefault();
+                        this.installModule();
+                    }
                 }
             }
         });
@@ -331,6 +356,7 @@ class CablePatcher {
             const error = await response.json();
             throw new Error(error.error || `API error: ${response.status}`);
         }
+        if (response.status === 204) return null;
         return response.json();
     }
 
@@ -442,6 +468,25 @@ class CablePatcher {
         }
 
         this.render();
+    }
+
+    /**
+     * Reload devices using the current location filters and re-render everything.
+     * Used after module install/uninstall to refresh device data.
+     */
+    async reloadDevicesAndRender() {
+        const params = {};
+        const rackId = document.getElementById('rack-select')?.value;
+        const locationId = document.getElementById('location-select')?.value;
+        const siteId = document.getElementById('site-select')?.value;
+        if (rackId) params.rack = rackId;
+        else if (locationId) params.location = locationId;
+        else if (siteId) params.site = siteId;
+
+        if (Object.keys(params).length > 0) {
+            await this.loadAvailableDevices(params);
+        }
+        await this.loadCablesAndRender();
     }
 
     // ========== Event Handlers ==========
@@ -765,11 +810,151 @@ class CablePatcher {
 
     getPortTypesForMode() {
         switch (this.currentMode) {
-            case 'network': return ['interfaces'];
+            case 'network': return ['interfaces', 'front_ports', 'rear_ports'];
             case 'power': return ['power_ports', 'power_outlets'];
             case 'console': return ['console_ports', 'console_server_ports'];
             default: return ['interfaces'];
         }
+    }
+
+    /**
+     * Group ports by module bay. Returns { base: [...], bays: [{bay, ports: [...]}, ...] }.
+     * Ports with no module_bay_id go into `base`. Ports with a module_bay_id are
+     * grouped under the matching module bay entry from device.module_bays.
+     */
+    groupPortsByModuleBay(ports, moduleBays) {
+        const base = [];
+        const bayMap = new Map(); // module_bay_id → [ports]
+
+        ports.forEach(port => {
+            if (port.module_bay_id) {
+                if (!bayMap.has(port.module_bay_id)) bayMap.set(port.module_bay_id, []);
+                bayMap.get(port.module_bay_id).push(port);
+            } else {
+                base.push(port);
+            }
+        });
+
+        // Build ordered bay list from device.module_bays, including empty bays
+        const bays = (moduleBays || []).map(bay => ({
+            bay,
+            ports: bayMap.get(bay.id) || []
+        }));
+
+        // Remove bays from bayMap as we process them; any leftovers are orphans
+        // (ports referencing a bay not in the device's module_bays list — shouldn't happen)
+        bayMap.forEach((orphanPorts, bayId) => {
+            if (!bays.find(b => b.bay.id === bayId)) {
+                base.push(...orphanPorts);
+            }
+        });
+
+        return { base, bays };
+    }
+
+    /**
+     * Calculate total device height accounting for module bay sections.
+     */
+    calculateDeviceHeight(base, bays, portTypes) {
+        let height = this.DEVICE_HEADER_HEIGHT;
+        // Base ports
+        height += base.length * this.PORT_HEIGHT;
+        // Module bays — only show bays that have visible ports or are empty (for install UI)
+        bays.forEach(({ bay, ports }) => {
+            const visiblePorts = this.filterPortsForMode(ports, portTypes);
+            // Always show bay header (even empty bays for install UI)
+            height += this.MODULE_BAY_HEADER_HEIGHT + this.MODULE_BAY_PADDING * 2;
+            height += visiblePorts.length * this.PORT_HEIGHT;
+            // Extra row for empty bays with no module installed
+            if (!bay.installed_module && visiblePorts.length === 0) {
+                height += this.PORT_HEIGHT;
+            }
+        });
+        height += this.DEVICE_PADDING;
+        return height;
+    }
+
+    /**
+     * Filter ports for the current mode (same logic as the port collection loop).
+     */
+    filterPortsForMode(ports, portTypes) {
+        return ports.filter(p => {
+            if (!portTypes.includes(p._portType)) return false;
+            if (p._portType === 'interfaces') {
+                const typeVal = (typeof p.type === 'object' ? p.type?.value : p.type || '').toLowerCase();
+                if (typeVal === 'virtual' || typeVal === 'lag' || typeVal === 'bridge') return false;
+            }
+            return true;
+        });
+    }
+
+    /**
+     * Render a single port at position (portX, portY) inside a device group.
+     */
+    renderPort(g, port, device, portX, portY, isLeft, side) {
+        // Store port position for cable routing
+        const portKey = `${port.port_type}-${port.id}`;
+        this.portPositions[portKey] = { x: portX, y: portY, device, port, side };
+
+        // Port circle
+        const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        circle.setAttribute('cx', portX);
+        circle.setAttribute('cy', portY);
+        circle.setAttribute('r', this.PORT_RADIUS);
+        circle.setAttribute('class', 'port' + (port.cable_id ? ' connected' : ''));
+        circle.setAttribute('data-port-type', port.port_type);
+        circle.setAttribute('data-port-id', port.id);
+        circle.setAttribute('data-device-id', device.id);
+
+        const color = this.PORT_COLORS[port.port_type] || this.PORT_COLORS.default;
+        circle.style.fill = port.cable_id ? color : '#fff';
+        circle.style.stroke = color;
+
+        circle.addEventListener('mouseenter', (e) => this.onPortHover(e, port, device));
+        circle.addEventListener('mouseleave', () => this.hideTooltip());
+        circle.addEventListener('click', (e) => this.onPortClick(e, port, device));
+        circle.addEventListener('dblclick', (e) => {
+            e.stopPropagation();
+            if (this.pendingConnection) {
+                this.cancelPendingConnection();
+            }
+            const url = this.getPortUrl(port);
+            if (url) window.open(url, '_blank');
+        });
+
+        g.appendChild(circle);
+
+        // Port type icon inside the circle
+        const iconKey = (port.port_type === 'FrontPort' || port.port_type === 'RearPort')
+            ? (port.cable_id ? port.port_type : port.port_type + '_uncabled')
+            : port.port_type;
+        const iconPath = this.PORT_ICONS[iconKey];
+        if (iconPath) {
+            const iconSize = this.PORT_RADIUS * 1.5;
+            const iconScale = iconSize / 24;
+            const icon = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            icon.setAttribute('d', iconPath);
+            icon.setAttribute('transform',
+                `translate(${portX - iconSize / 2}, ${portY - iconSize / 2}) scale(${iconScale})`);
+            icon.setAttribute('class', 'port-icon');
+            icon.style.fill = port.cable_id ? '#ffffff' : color;
+            if (port.cable_id) icon.style.opacity = '0.6';
+            g.appendChild(icon);
+        }
+
+        // Port label — on the inner side of the port dot
+        const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        const labelX = isLeft
+            ? portX - this.PORT_RADIUS - 5
+            : portX + this.PORT_RADIUS + 5;
+        label.setAttribute('x', labelX);
+        label.setAttribute('y', portY + 4);
+        label.setAttribute('class', 'port-label' + (port.cable_id ? ' port-label--connected' : ''));
+        label.setAttribute('text-anchor', isLeft ? 'end' : 'start');
+        label.textContent = port.untagged_vlan_vid
+            ? `${port.name} (V${port.untagged_vlan_vid})`
+            : port.name;
+        g.appendChild(label);
     }
 
     /**
@@ -784,20 +969,24 @@ class CablePatcher {
         g.setAttribute('class', 'device device--' + side);
         g.setAttribute('data-device-id', device.id);
 
-        // Collect ports — exclude virtual interfaces (no physical connector)
-        let ports = [];
-        portTypes.forEach(type => {
+        // Collect ALL ports (before mode filtering) so we can group by module bay
+        let allPorts = [];
+        const allPortTypes = ['interfaces', 'front_ports', 'rear_ports', 'power_ports',
+                              'power_outlets', 'console_ports', 'console_server_ports'];
+        allPortTypes.forEach(type => {
             (device[type] || []).forEach(p => {
-                if (type === 'interfaces') {
-                    const typeVal = (typeof p.type === 'object' ? p.type?.value : p.type || '').toLowerCase();
-                    if (typeVal === 'virtual' || typeVal === 'lag' || typeVal === 'bridge') return;
-                }
-                ports.push({ ...p, _portType: type });
+                allPorts.push({ ...p, _portType: type });
             });
         });
 
-        const rowCount = ports.length;
-        const deviceHeight = this.DEVICE_HEADER_HEIGHT + (rowCount * this.PORT_HEIGHT) + this.DEVICE_PADDING;
+        // Group ports by module bay
+        const { base, bays } = this.groupPortsByModuleBay(allPorts, device.module_bays);
+
+        // Filter base ports for current mode
+        const visibleBase = this.filterPortsForMode(base, portTypes);
+
+        // Calculate device height
+        const deviceHeight = this.calculateDeviceHeight(visibleBase, bays, portTypes);
 
         // Device background
         const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
@@ -871,73 +1060,90 @@ class CablePatcher {
             ? x + this.DEVICE_WIDTH - this.DEVICE_PADDING
             : x + this.DEVICE_PADDING;
 
-        ports.forEach((port, index) => {
-            const portY = y + this.DEVICE_HEADER_HEIGHT + (index * this.PORT_HEIGHT) + this.PORT_HEIGHT / 2;
+        let currentY = y + this.DEVICE_HEADER_HEIGHT;
 
-            // Store port position for cable routing
-            const portKey = `${port.port_type}-${port.id}`;
-            this.portPositions[portKey] = { x: portX, y: portY, device, port, side };
+        // Render base ports (not in any module bay)
+        visibleBase.forEach(port => {
+            const portY = currentY + this.PORT_HEIGHT / 2;
+            this.renderPort(g, port, device, portX, portY, isLeft, side);
+            currentY += this.PORT_HEIGHT;
+        });
 
-            // Port circle
-            const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-            circle.setAttribute('cx', portX);
-            circle.setAttribute('cy', portY);
-            circle.setAttribute('r', this.PORT_RADIUS);
-            circle.setAttribute('class', 'port' + (port.cable_id ? ' connected' : ''));
-            circle.setAttribute('data-port-type', port.port_type);
-            circle.setAttribute('data-port-id', port.id);
-            circle.setAttribute('data-device-id', device.id);
+        // Render module bay sections
+        bays.forEach(({ bay, ports }) => {
+            const visiblePorts = this.filterPortsForMode(ports, portTypes);
+            const isEmpty = !bay.installed_module && visiblePorts.length === 0;
+            const bayPortCount = isEmpty ? 1 : visiblePorts.length; // 1 row for empty placeholder
+            const bayHeight = this.MODULE_BAY_HEADER_HEIGHT + this.MODULE_BAY_PADDING * 2
+                            + bayPortCount * this.PORT_HEIGHT;
 
-            const color = this.PORT_COLORS[port.port_type] || this.PORT_COLORS.default;
-            circle.style.fill = port.cable_id ? color : '#fff';
-            circle.style.stroke = color;
+            // Module bay outline rect
+            const bayRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            bayRect.setAttribute('x', x + this.MODULE_BAY_INSET);
+            bayRect.setAttribute('y', currentY);
+            bayRect.setAttribute('width', this.DEVICE_WIDTH - this.MODULE_BAY_INSET * 2);
+            bayRect.setAttribute('height', bayHeight);
+            bayRect.setAttribute('rx', 4);
+            bayRect.setAttribute('class', 'module-bay-outline' + (isEmpty ? ' module-bay-outline--empty' : ''));
+            g.appendChild(bayRect);
 
-            circle.addEventListener('mouseenter', (e) => this.onPortHover(e, port, device));
-            circle.addEventListener('mouseleave', () => this.hideTooltip());
-            circle.addEventListener('click', (e) => this.onPortClick(e, port, device));
-            circle.addEventListener('dblclick', (e) => {
-                e.stopPropagation();
-                if (this.pendingConnection) {
-                    this.cancelPendingConnection();
-                }
-                const url = this.getPortUrl(port);
-                if (url) window.open(url, '_blank');
-            });
-
-            g.appendChild(circle);
-
-            // Port type icon inside the circle
-            const iconKey = (port.port_type === 'FrontPort' || port.port_type === 'RearPort')
-                ? (port.cable_id ? port.port_type : port.port_type + '_uncabled')
-                : port.port_type;
-            const iconPath = this.PORT_ICONS[iconKey];
-            if (iconPath) {
-                const iconSize = this.PORT_RADIUS * 1.5;
-                const iconScale = iconSize / 24;
-                const icon = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-                icon.setAttribute('d', iconPath);
-                icon.setAttribute('transform',
-                    `translate(${portX - iconSize / 2}, ${portY - iconSize / 2}) scale(${iconScale})`);
-                icon.setAttribute('class', 'port-icon');
-                icon.style.fill = port.cable_id ? '#ffffff' : color;
-                if (port.cable_id) icon.style.opacity = '0.6';
-                g.appendChild(icon);
+            // Module bay header label
+            const bayLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            bayLabel.setAttribute('x', x + this.MODULE_BAY_INSET + 6);
+            bayLabel.setAttribute('y', currentY + 15);
+            bayLabel.setAttribute('class', 'module-bay-label');
+            if (bay.installed_module) {
+                const mod = bay.installed_module.module_type;
+                bayLabel.textContent = `${bay.name}: ${mod.manufacturer} ${mod.model}`;
+            } else {
+                bayLabel.textContent = `${bay.name}: (empty)`;
             }
+            g.appendChild(bayLabel);
 
-            // Port label — on the inner side of the port dot
-            const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            // Left device: label to the left of the dot; Right device: label to the right
-            const labelX = isLeft
-                ? portX - this.PORT_RADIUS - 5
-                : portX + this.PORT_RADIUS + 5;
-            label.setAttribute('x', labelX);
-            label.setAttribute('y', portY + 4);
-            label.setAttribute('class', 'port-label' + (port.cable_id ? ' port-label--connected' : ''));
-            label.setAttribute('text-anchor', isLeft ? 'end' : 'start');
-            label.textContent = port.untagged_vlan_vid
-                ? `${port.name} (V${port.untagged_vlan_vid})`
-                : port.name;
-            g.appendChild(label);
+            // Module bay action icon (install/uninstall) — on the right side of header
+            const actionX = x + this.DEVICE_WIDTH - this.MODULE_BAY_INSET - 18;
+            const actionY = currentY + 4;
+            const actionIcon = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            actionIcon.setAttribute('x', actionX);
+            actionIcon.setAttribute('y', actionY + 12);
+            actionIcon.setAttribute('class', 'module-bay-action');
+            if (bay.installed_module) {
+                actionIcon.textContent = '\u2715'; // × for uninstall
+                actionIcon.setAttribute('title', 'Uninstall module');
+                actionIcon.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.uninstallModule(bay, device);
+                });
+            } else {
+                actionIcon.textContent = '+';
+                actionIcon.setAttribute('title', 'Install module');
+                actionIcon.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.showInstallModuleModal(bay, device);
+                });
+            }
+            g.appendChild(actionIcon);
+
+            currentY += this.MODULE_BAY_HEADER_HEIGHT;
+
+            if (isEmpty) {
+                // Empty placeholder row — clickable to install
+                const emptyLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                emptyLabel.setAttribute('x', x + this.DEVICE_WIDTH / 2);
+                emptyLabel.setAttribute('y', currentY + this.MODULE_BAY_PADDING + this.PORT_HEIGHT / 2 + 4);
+                emptyLabel.setAttribute('class', 'module-bay-empty-label');
+                emptyLabel.textContent = 'Click + to install module';
+                g.appendChild(emptyLabel);
+                currentY += this.PORT_HEIGHT + this.MODULE_BAY_PADDING * 2;
+            } else {
+                currentY += this.MODULE_BAY_PADDING;
+                visiblePorts.forEach(port => {
+                    const portY = currentY + this.PORT_HEIGHT / 2;
+                    this.renderPort(g, port, device, portX, portY, isLeft, side);
+                    currentY += this.PORT_HEIGHT;
+                });
+                currentY += this.MODULE_BAY_PADDING;
+            }
         });
 
         this.devicesLayer.appendChild(g);
@@ -1210,6 +1416,117 @@ class CablePatcher {
         if (labelInput) labelInput.value = defaults.label;
 
         this.showModal('create-cable-modal');
+    }
+
+    // ========== Module Bay Install / Uninstall ==========
+
+    showInstallModuleModal(bay, device) {
+        this._pendingModuleInstall = { bay, device };
+
+        // Populate modal fields
+        document.getElementById('install-module-bay-name').textContent =
+            `${device.name} — Bay: ${bay.name}`;
+        document.getElementById('module-type-search').value = '';
+        document.getElementById('module-type-results').innerHTML = '';
+        document.getElementById('install-module-btn').disabled = true;
+        this._selectedModuleTypeId = null;
+
+        this.showModal('install-module-modal');
+
+        // Focus the search input after modal is shown
+        setTimeout(() => {
+            document.getElementById('module-type-search')?.focus();
+        }, 200);
+    }
+
+    async searchModuleTypes(query) {
+        if (!query || query.length < 2) {
+            document.getElementById('module-type-results').innerHTML =
+                '<div class="text-muted small p-2">Type at least 2 characters to search...</div>';
+            return;
+        }
+
+        try {
+            const results = await this.apiGet(`module-types/?q=${encodeURIComponent(query)}`);
+            const container = document.getElementById('module-type-results');
+            container.innerHTML = '';
+            this._selectedModuleTypeId = null;
+            document.getElementById('install-module-btn').disabled = true;
+
+            if (results.length === 0) {
+                container.innerHTML = '<div class="text-muted small p-2">No module types found.</div>';
+                return;
+            }
+
+            results.forEach(mt => {
+                const item = document.createElement('div');
+                item.className = 'module-type-result';
+                item.dataset.moduleTypeId = mt.id;
+                item.innerHTML = `
+                    <strong>${this.escapeHtml(mt.manufacturer_name)}</strong>
+                    <span>${this.escapeHtml(mt.model)}</span>
+                    ${mt.part_number ? `<small class="text-muted">${this.escapeHtml(mt.part_number)}</small>` : ''}
+                `;
+                item.addEventListener('click', () => {
+                    // Deselect all, select this one
+                    container.querySelectorAll('.module-type-result').forEach(el =>
+                        el.classList.remove('selected'));
+                    item.classList.add('selected');
+                    this._selectedModuleTypeId = mt.id;
+                    document.getElementById('install-module-btn').disabled = false;
+                });
+                container.appendChild(item);
+            });
+        } catch (error) {
+            document.getElementById('module-type-results').innerHTML =
+                `<div class="text-danger small p-2">Search failed: ${this.escapeHtml(error.message)}</div>`;
+        }
+    }
+
+    async installModule() {
+        if (!this._pendingModuleInstall || !this._selectedModuleTypeId) return;
+
+        const { bay, device } = this._pendingModuleInstall;
+        const installBtn = document.getElementById('install-module-btn');
+        installBtn.disabled = true;
+        installBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Installing...';
+
+        try {
+            await this.apiPost(`module-bays/${bay.id}/install/`, {
+                module_type_id: this._selectedModuleTypeId
+            });
+
+            this.hideModal('install-module-modal');
+            this._pendingModuleInstall = null;
+            this._selectedModuleTypeId = null;
+
+            // Reload devices and re-render to reflect the new module
+            await this.reloadDevicesAndRender();
+        } catch (error) {
+            this.showError('Failed to install module: ' + error.message);
+        } finally {
+            installBtn.disabled = false;
+            installBtn.innerHTML = '<i class="mdi mdi-check"></i> Install Module';
+        }
+    }
+
+    async uninstallModule(bay, device) {
+        if (!bay.installed_module) return;
+
+        const mod = bay.installed_module.module_type;
+        const label = `${mod.manufacturer} ${mod.model}`;
+        if (!confirm(`Uninstall "${label}" from bay "${bay.name}" on ${device.name}?\n\nThis will also remove all ports/interfaces belonging to this module.`)) {
+            return;
+        }
+
+        try {
+            await this.apiPost(`module-bays/${bay.id}/uninstall/`, {});
+
+            // Reload devices and re-render
+            await this.reloadDevicesAndRender();
+        } catch (error) {
+            this.showError('Failed to uninstall module: ' + error.message);
+        }
     }
 
     showModal(modalId) {

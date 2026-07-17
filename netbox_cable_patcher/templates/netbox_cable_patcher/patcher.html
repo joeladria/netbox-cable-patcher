@@ -345,6 +345,38 @@
     </div>
 </div>
 
+<!-- Install Module Modal -->
+<div class="modal fade" id="install-module-modal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="mdi mdi-puzzle"></i> Install Module</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">Module Bay</label>
+                    <div id="install-module-bay-name" class="form-control-plaintext fw-bold">-</div>
+                </div>
+                <div class="mb-3">
+                    <label for="module-type-search" class="form-label">Search Module Type</label>
+                    <input type="text" class="form-control" id="module-type-search"
+                           placeholder="Type to search module types..." autocomplete="off">
+                </div>
+                <div id="module-type-results" class="module-type-results">
+                    <div class="text-muted small p-2">Type at least 2 characters to search...</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="install-module-btn" disabled>
+                    <i class="mdi mdi-check"></i> Install Module
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Port Tooltip -->
 <div id="port-tooltip" class="port-tooltip" style="display: none;">
     <div class="port-tooltip-content">
