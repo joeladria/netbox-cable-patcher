@@ -1340,6 +1340,77 @@ class CablePatcher {
         return segment ? `/dcim/${segment}/${port.id}/` : null;
     }
 
+    // Maps a termination `type` string (as returned by CableSerializer /
+    // PortSerializer's `port_type`) to the device field array it lives in.
+    static PORT_TYPE_TO_DEVICE_FIELD = {
+        Interface: 'interfaces',
+        FrontPort: 'front_ports',
+        RearPort: 'rear_ports',
+        PowerPort: 'power_ports',
+        PowerOutlet: 'power_outlets',
+        ConsolePort: 'console_ports',
+        ConsoleServerPort: 'console_server_ports',
+    };
+
+    /**
+     * Find the live port object (by reference) for a given termination
+     * type/id within `this.availableDevices`, so it can be mutated in place.
+     * Returns null if the owning device isn't currently loaded.
+     */
+    findPortObject(portType, portId) {
+        const field = CablePatcher.PORT_TYPE_TO_DEVICE_FIELD[portType];
+        if (!field) return null;
+        for (const device of this.availableDevices) {
+            const ports = device[field] || [];
+            const port = ports.find(p => p.id === portId);
+            if (port) return { port, device };
+        }
+        return null;
+    }
+
+    /**
+     * Locally patch the `cable_id` / `connected_endpoint` of both ends of a
+     * newly-created cable so the UI reflects the connection immediately,
+     * without re-fetching device data from the server.
+     */
+    applyCableConnection(cable) {
+        const aTerms = cable.a_terminations || [];
+        const bTerms = cable.b_terminations || [];
+        const pairs = [
+            ...aTerms.map(term => ({ term, others: bTerms })),
+            ...bTerms.map(term => ({ term, others: aTerms })),
+        ];
+
+        pairs.forEach(({ term, others }) => {
+            const found = this.findPortObject(term.type, term.id);
+            if (!found) return;
+            found.port.cable_id = cable.id;
+            const other = others[0];
+            found.port.connected_endpoint = other ? {
+                id: other.id,
+                name: other.name,
+                device_id: other.device_id,
+                device_name: other.device_name,
+                type: other.type,
+            } : null;
+        });
+    }
+
+    /**
+     * Locally patch the `cable_id` / `connected_endpoint` of both ends of a
+     * deleted cable back to "available" without re-fetching device data.
+     */
+    applyCableDisconnection(cable) {
+        const aTerms = cable.a_terminations || [];
+        const bTerms = cable.b_terminations || [];
+        [...aTerms, ...bTerms].forEach(term => {
+            const found = this.findPortObject(term.type, term.id);
+            if (!found) return;
+            found.port.cable_id = null;
+            found.port.connected_endpoint = null;
+        });
+    }
+
     // ========== Port Interaction ==========
 
     onPortHover(e, port, device) {
@@ -1872,8 +1943,10 @@ class CablePatcher {
         this._pendingCableData = null;
 
         try {
-            await this.apiPost('cables/', cableData);
-            await this.loadCablesAndRender();
+            const cable = await this.apiPost('cables/', cableData);
+            this.cables.push(cable);
+            this.applyCableConnection(cable);
+            this.render();
         } catch (error) {
             this.showError('Failed to create cable: ' + error.message);
         }
@@ -1898,13 +1971,15 @@ class CablePatcher {
         if (label) cableData.label = label;
 
         try {
-            await this.apiPost('cables/', cableData);
+            const cable = await this.apiPost('cables/', cableData);
             this.hideModal('create-cable-modal');
             document.getElementById('cable-type-select').value = '';
             document.getElementById('cable-color-input').value = '#000000';
             document.getElementById('cable-label-input').value = '';
             this._pendingCableData = null;
-            await this.loadCablesAndRender();
+            this.cables.push(cable);
+            this.applyCableConnection(cable);
+            this.render();
         } catch (error) {
             alert('Failed to create cable: ' + error.message);
         }
@@ -1916,9 +1991,10 @@ class CablePatcher {
         if (!confirm('Are you sure you want to delete this cable?')) return;
         try {
             await this.apiDelete(`cables/${this.selectedCable.id}/`);
+            this.applyCableDisconnection(this.selectedCable);
             this.cables = this.cables.filter(c => c.id !== this.selectedCable.id);
             this.closeCablePanel();
-            await this.loadCablesAndRender();
+            this.render();
         } catch (error) {
             alert('Failed to delete cable: ' + error.message);
         }
@@ -1929,13 +2005,14 @@ class CablePatcher {
         const count = this.selectedCables.length;
         if (!confirm(`Are you sure you want to delete ${count} cable(s)?`)) return;
         try {
-            const ids = this.selectedCables.map(c => c.id);
-            for (const id of ids) {
-                await this.apiDelete(`cables/${id}/`);
-                this.cables = this.cables.filter(c => c.id !== id);
+            const cablesToDelete = [...this.selectedCables];
+            for (const cable of cablesToDelete) {
+                await this.apiDelete(`cables/${cable.id}/`);
+                this.applyCableDisconnection(cable);
+                this.cables = this.cables.filter(c => c.id !== cable.id);
             }
             this.closeCablePanel();
-            await this.loadCablesAndRender();
+            this.render();
         } catch (error) {
             alert('Failed to delete cables: ' + error.message);
         }

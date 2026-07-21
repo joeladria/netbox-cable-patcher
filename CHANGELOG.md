@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.4.1 (2026-07-21)
+
+* Port connect/disconnect state (cable line, port color/icon, connected badge in hover tooltip) now updates instantly after creating or deleting a cable by patching the affected ports' `cable_id`/`connected_endpoint` directly in local state, instead of refetching all devices and cables from the server.
+
 ## 0.4.0 (2026-07-21)
 
 * Fixed cable creation not generating a cable trace (`CablePath`). Cable creation now assigns terminations via NetBox's `Cable.a_terminations`/`b_terminations` model API and calls `full_clean()` before `save()`, instead of creating `CableTermination` rows directly — matching NetBox's own object-creation pattern and ensuring NetBox's internal `trace_paths` signal fires so cable paths are built correctly.
