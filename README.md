@@ -47,7 +47,7 @@ ports — no more hunting through forms to figure out what's plugged into what.
 
 | NetBox Version | Plugin Version |
 |----------------|----------------|
-|     4.5         |      0.4.1     |
+|     4.5         |      0.4.2     |
 |     4.0        |      0.1.0     |
 
 ## Installing

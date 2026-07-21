@@ -2,7 +2,7 @@
 
 __author__ = "Joel Adria, Moment Factory"
 __email__ = ""
-__version__ = "0.4.1"
+__version__ = "0.4.2"
 
 
 from netbox.plugins import PluginConfig
