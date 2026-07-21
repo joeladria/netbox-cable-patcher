@@ -192,6 +192,177 @@ class TestLocationsViewSet:
         assert response.data[0]['name'] == 'Test Site'
 
 
+class TestDevicesViewSetMultiSelectFiltering:
+    """Test multi-value rack/location filtering in DevicesViewSet.list."""
+
+    @pytest.fixture
+    def request_factory(self):
+        return RequestFactory()
+
+    def _mock_queryset(self, mock_device_class):
+        """Wire up a mock Device queryset chain that records filter() calls
+        and supports the prefetch/select_related chain used by the view."""
+        mock_qs = MagicMock()
+        mock_qs.filter.return_value = mock_qs
+        mock_qs.select_related.return_value = mock_qs
+        mock_qs.prefetch_related.return_value = mock_qs
+        mock_qs.order_by.return_value = []
+        mock_device_class.objects.restrict.return_value = mock_qs
+        return mock_qs
+
+    def test_multiple_rack_ids_use_in_lookup(self, request_factory):
+        """Multiple `rack` params should be combined into a single rack_id__in filter."""
+        with patch('netbox_cable_patcher.api.views.Device') as mock_device_class:
+            from netbox_cable_patcher.api.views import DevicesViewSet
+
+            mock_qs = self._mock_queryset(mock_device_class)
+
+            request = request_factory.get('/api/devices/?rack=1&rack=2&rack=3')
+            request.user = MagicMock()
+
+            viewset = DevicesViewSet()
+            viewset.request = request
+            response = viewset.list(request)
+
+            assert response.status_code == 200
+            mock_qs.filter.assert_called_with(rack_id__in=[1, 2, 3])
+
+    def test_multiple_location_ids_use_in_lookup(self, request_factory):
+        """Multiple `location` params should be combined into a location_id__in filter."""
+        with patch('netbox_cable_patcher.api.views.Device') as mock_device_class:
+            from netbox_cable_patcher.api.views import DevicesViewSet
+
+            mock_qs = self._mock_queryset(mock_device_class)
+
+            request = request_factory.get('/api/devices/?location=5&location=6')
+            request.user = MagicMock()
+
+            viewset = DevicesViewSet()
+            viewset.request = request
+            response = viewset.list(request)
+
+            assert response.status_code == 200
+            mock_qs.filter.assert_called_with(rack__location_id__in=[5, 6])
+
+    def test_racks_take_precedence_over_locations(self, request_factory):
+        """When both rack and location params are given, racks win."""
+        with patch('netbox_cable_patcher.api.views.Device') as mock_device_class:
+            from netbox_cable_patcher.api.views import DevicesViewSet
+
+            mock_qs = self._mock_queryset(mock_device_class)
+
+            request = request_factory.get('/api/devices/?rack=1&location=5')
+            request.user = MagicMock()
+
+            viewset = DevicesViewSet()
+            viewset.request = request
+            response = viewset.list(request)
+
+            assert response.status_code == 200
+            mock_qs.filter.assert_called_with(rack_id__in=[1])
+
+    def test_invalid_rack_id_returns_400(self, request_factory):
+        """Non-integer rack IDs should return a 400 error, not raise an exception."""
+        with patch('netbox_cable_patcher.api.views.Device') as mock_device_class:
+            from netbox_cable_patcher.api.views import DevicesViewSet
+
+            self._mock_queryset(mock_device_class)
+
+            request = request_factory.get('/api/devices/?rack=not-a-number')
+            request.user = MagicMock()
+
+            viewset = DevicesViewSet()
+            viewset.request = request
+            response = viewset.list(request)
+
+            assert response.status_code == 400
+            assert 'Invalid' in response.data.get('error', '')
+
+    def test_no_filters_returns_400(self, request_factory):
+        """No rack, location, or site should return a 400 error."""
+        with patch('netbox_cable_patcher.api.views.Device') as mock_device_class:
+            from netbox_cable_patcher.api.views import DevicesViewSet
+
+            self._mock_queryset(mock_device_class)
+
+            request = request_factory.get('/api/devices/')
+            request.user = MagicMock()
+
+            viewset = DevicesViewSet()
+            viewset.request = request
+            response = viewset.list(request)
+
+            assert response.status_code == 400
+
+
+class TestCablesViewSetMultiSelectFiltering:
+    """Test multi-value rack/location filtering in CablesViewSet.list."""
+
+    @pytest.fixture
+    def request_factory(self):
+        return RequestFactory()
+
+    def test_multiple_rack_ids_resolve_devices(self, request_factory):
+        """Multiple `rack` params should resolve devices via rack_id__in, then find no cables."""
+        with patch('netbox_cable_patcher.api.views.Device') as mock_device_class:
+            from netbox_cable_patcher.api.views import CablesViewSet
+
+            mock_qs = MagicMock()
+            mock_qs.filter.return_value = mock_qs
+            mock_qs.values_list.return_value = []  # no devices found
+            mock_device_class.objects.restrict.return_value = mock_qs
+
+            request = request_factory.get('/api/cables/?rack=1&rack=2')
+            request.user = MagicMock()
+
+            viewset = CablesViewSet()
+            viewset.request = request
+            response = viewset.list(request)
+
+            assert response.status_code == 200
+            assert response.data == []
+            mock_qs.filter.assert_called_with(rack_id__in=[1, 2])
+
+    def test_multiple_location_ids_resolve_devices(self, request_factory):
+        """Multiple `location` params should resolve devices via location_id__in."""
+        with patch('netbox_cable_patcher.api.views.Device') as mock_device_class:
+            from netbox_cable_patcher.api.views import CablesViewSet
+
+            mock_qs = MagicMock()
+            mock_qs.filter.return_value = mock_qs
+            mock_qs.values_list.return_value = []
+            mock_device_class.objects.restrict.return_value = mock_qs
+
+            request = request_factory.get('/api/cables/?location=7&location=8')
+            request.user = MagicMock()
+
+            viewset = CablesViewSet()
+            viewset.request = request
+            response = viewset.list(request)
+
+            assert response.status_code == 200
+            mock_qs.filter.assert_called_with(rack__location_id__in=[7, 8])
+
+    def test_invalid_rack_id_returns_400(self, request_factory):
+        """Non-integer rack IDs should return a 400 error."""
+        with patch('netbox_cable_patcher.api.views.Device') as mock_device_class:
+            from netbox_cable_patcher.api.views import CablesViewSet
+
+            mock_qs = MagicMock()
+            mock_qs.filter.return_value = mock_qs
+            mock_device_class.objects.restrict.return_value = mock_qs
+
+            request = request_factory.get('/api/cables/?rack=bogus')
+            request.user = MagicMock()
+
+            viewset = CablesViewSet()
+            viewset.request = request
+            response = viewset.list(request)
+
+            assert response.status_code == 400
+            assert 'Invalid' in response.data.get('error', '')
+
+
 class TestCableStatusConstants:
     """Test that the plugin uses NetBox constants correctly."""
 

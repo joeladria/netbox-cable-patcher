@@ -23,8 +23,14 @@
 - [x] Module Bays visualization: modules shown as outlined sections within device cards
 - [x] Module Bays population: install/uninstall modules from the patcher UI with search
 
+## v0.4
+- [x] Fix low-contrast "Connected"/"Available" port tooltip badges
+- [x] Multi-select Location and Rack filters (Site remains single-select)
+- [ ] Fix intermittent display crash when removing a module (deferred — needs reproduction steps)
+
 
 ## Future Ideas
 
 - [ ] Bulk cable operations 
 - [ ] Export diagram (PNG/SVG)
+- [ ] Multi-select Site filter (would require cross-site location/rack union UX design)

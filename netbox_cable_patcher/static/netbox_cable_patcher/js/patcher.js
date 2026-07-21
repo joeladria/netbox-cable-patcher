@@ -106,8 +106,8 @@ class CablePatcher {
         const params = new URLSearchParams(window.location.search);
         return {
             site: params.get('site') || '',
-            location: params.get('location') || '',
-            rack: params.get('rack') || '',
+            location: (params.get('location') || '').split(',').filter(Boolean),
+            rack: (params.get('rack') || '').split(',').filter(Boolean),
             mode: params.get('mode') || '',
             left: params.get('left') || '',
             right: params.get('right') || ''
@@ -117,13 +117,13 @@ class CablePatcher {
     pushUrlState() {
         const params = new URLSearchParams();
         const site = document.getElementById('site-select').value;
-        const location = document.getElementById('location-select').value;
-        const rack = document.getElementById('rack-select').value;
+        const locationIds = this.getSelectedValues('location-select');
+        const rackIds = this.getSelectedValues('rack-select');
         const mode = this.currentMode;
 
         if (site) params.set('site', site);
-        if (location) params.set('location', location);
-        if (rack) params.set('rack', rack);
+        if (locationIds.length > 0) params.set('location', locationIds.join(','));
+        if (rackIds.length > 0) params.set('rack', rackIds.join(','));
         if (mode && mode !== 'network') params.set('mode', mode);
         if (this.leftDeviceIds.length > 0) params.set('left', this.leftDeviceIds.join(','));
         if (this.rightDeviceIds.length > 0) params.set('right', this.rightDeviceIds.join(','));
@@ -163,25 +163,29 @@ class CablePatcher {
             this.populateSelect('rack-select', rackOptions, 'Select Rack...', false);
         }
 
-        // Set location and populate its racks
-        if (state.location) {
-            this.setSelectValue('location-select', state.location);
-            const loc = site.locations.find(l => l.id == state.location);
-            if (loc && loc.racks.length > 0) {
-                const rackOptions = loc.racks.map(r => ({ value: r.id, text: r.name }));
+        // Set location(s) and populate the union of their racks
+        if (state.location.length > 0) {
+            this.setSelectValues('location-select', state.location);
+            const selectedLocations = site.locations.filter(l => state.location.includes(String(l.id)));
+            const rackMap = new Map();
+            selectedLocations.forEach(loc => {
+                (loc.racks || []).forEach(r => rackMap.set(r.id, r));
+            });
+            if (rackMap.size > 0) {
+                const rackOptions = Array.from(rackMap.values()).map(r => ({ value: r.id, text: r.name }));
                 this.populateSelect('rack-select', rackOptions, 'Select Rack...', false);
             }
         }
 
-        // Set rack
-        if (state.rack) {
-            this.setSelectValue('rack-select', state.rack);
+        // Set rack(s)
+        if (state.rack.length > 0) {
+            this.setSelectValues('rack-select', state.rack);
         }
 
         // Load available devices pool
         const loadParams = {};
-        if (state.rack) loadParams.rack = state.rack;
-        else if (state.location) loadParams.location = state.location;
+        if (state.rack.length > 0) loadParams.rack = state.rack;
+        else if (state.location.length > 0) loadParams.location = state.location;
         else loadParams.site = state.site;
 
         await this.loadAvailableDevices(loadParams);
@@ -216,6 +220,37 @@ class CablePatcher {
         } else {
             el.value = value;
         }
+    }
+
+    /**
+     * Set the selected values of a multi-select (TomSelect or native).
+     * `values` is an array of string/number IDs.
+     */
+    setSelectValues(selectId, values) {
+        const el = document.getElementById(selectId);
+        if (!el) return;
+        if (el.tomselect) {
+            el.tomselect.setValue(values, true);
+        } else {
+            const valueSet = new Set(values.map(String));
+            Array.from(el.options).forEach(opt => {
+                opt.selected = valueSet.has(opt.value);
+            });
+        }
+    }
+
+    /**
+     * Read the currently selected values of a multi-select (TomSelect or
+     * native) as an array of strings. Empty-string placeholder values are
+     * filtered out.
+     */
+    getSelectedValues(selectId) {
+        const el = document.getElementById(selectId);
+        if (!el) return [];
+        if (el.tomselect) {
+            return (el.tomselect.getValue() || []).filter(v => v !== '');
+        }
+        return Array.from(el.selectedOptions).map(o => o.value).filter(v => v !== '');
     }
 
     // ========== Event Listeners ==========
@@ -393,20 +428,27 @@ class CablePatcher {
         this.populateSelect('site-select', options, 'Select Site...');
     }
 
+    /**
+     * Populate a <select> with options. For multi-select elements
+     * (native `multiple` attribute or a TomSelect instance configured for
+     * multiple selection), no placeholder option is added since an empty
+     * "Select..." entry doesn't make sense alongside real selections.
+     */
     populateSelect(selectId, options, placeholder = 'Select...', disabled = false) {
         const select = document.getElementById(selectId);
         if (!select) return;
+        const isMultiple = select.multiple;
         const ts = select.tomselect;
         if (ts) {
             ts.clear();
             ts.clearOptions();
-            ts.addOption({ value: '', text: placeholder });
+            if (!isMultiple) ts.addOption({ value: '', text: placeholder });
             options.forEach(opt => ts.addOption({ value: opt.value, text: opt.text }));
             ts.refreshOptions(false);
             disabled ? ts.disable() : ts.enable();
         } else {
             select.innerHTML = '';
-            select.add(new Option(placeholder, ''));
+            if (!isMultiple) select.add(new Option(placeholder, ''));
             options.forEach(opt => select.add(new Option(opt.text, opt.value)));
             select.disabled = disabled;
         }
@@ -415,14 +457,25 @@ class CablePatcher {
     /**
      * Load the pool of devices available for the current site/location/rack filter.
      * Populates both left/right device dropdowns but does NOT change left/right selections.
+     *
+     * `params.rack` and `params.location` may be a single value or an array
+     * of values (multi-select). `params.site` is always a single value.
+     * Precedence: rack(s) > location(s) > site.
      */
     async loadAvailableDevices(params) {
         this.showLoading(true);
         try {
             const qp = new URLSearchParams();
-            if (params.rack) qp.set('rack', params.rack);
-            else if (params.location) qp.set('location', params.location);
-            else if (params.site) qp.set('site', params.site);
+            const racks = [].concat(params.rack || []).filter(Boolean);
+            const locations = [].concat(params.location || []).filter(Boolean);
+
+            if (racks.length > 0) {
+                racks.forEach(id => qp.append('rack', id));
+            } else if (locations.length > 0) {
+                locations.forEach(id => qp.append('location', id));
+            } else if (params.site) {
+                qp.set('site', params.site);
+            }
 
             const devicesResponse = await this.apiGet('devices/?' + qp.toString());
             this.availableDevices = devicesResponse || [];
@@ -476,11 +529,11 @@ class CablePatcher {
      */
     async reloadDevicesAndRender() {
         const params = {};
-        const rackId = document.getElementById('rack-select')?.value;
-        const locationId = document.getElementById('location-select')?.value;
+        const rackIds = this.getSelectedValues('rack-select');
+        const locationIds = this.getSelectedValues('location-select');
         const siteId = document.getElementById('site-select')?.value;
-        if (rackId) params.rack = rackId;
-        else if (locationId) params.location = locationId;
+        if (rackIds.length > 0) params.rack = rackIds;
+        else if (locationIds.length > 0) params.location = locationIds;
         else if (siteId) params.site = siteId;
 
         if (Object.keys(params).length > 0) {
@@ -535,42 +588,56 @@ class CablePatcher {
     }
 
     onLocationChange(e) {
-        const locationId = e.target.value;
+        const locationIds = this.getSelectedValues('location-select');
         const siteId = document.getElementById('site-select').value;
 
-        this.populateSelect('rack-select', [], 'Select Rack...', true);
-
-        if (!locationId) {
+        if (locationIds.length === 0) {
+            // No locations selected — fall back to site-level racks (if any)
+            const site = this.locations.find(s => s.id == siteId);
+            if (site && site.racks.length > 0) {
+                const rackOptions = site.racks.map(r => ({ value: r.id, text: r.name }));
+                this.populateSelect('rack-select', rackOptions, 'Select Rack...', false);
+            } else {
+                this.populateSelect('rack-select', [], 'Select Rack...', true);
+            }
             if (siteId) this.loadAvailableDevices({ site: siteId });
             this.pushUrlState();
             return;
         }
 
         const site = this.locations.find(s => s.id == siteId);
-        const location = site?.locations.find(l => l.id == locationId);
+        const selectedLocations = site?.locations.filter(l => locationIds.includes(String(l.id))) || [];
 
-        if (location && location.racks.length > 0) {
-            const rackOptions = location.racks.map(r => ({ value: r.id, text: r.name }));
+        // Union of racks across all selected locations
+        const rackMap = new Map();
+        selectedLocations.forEach(loc => {
+            (loc.racks || []).forEach(r => rackMap.set(r.id, r));
+        });
+
+        if (rackMap.size > 0) {
+            const rackOptions = Array.from(rackMap.values()).map(r => ({ value: r.id, text: r.name }));
             this.populateSelect('rack-select', rackOptions, 'Select Rack...', false);
+        } else {
+            this.populateSelect('rack-select', [], 'Select Rack...', true);
         }
 
-        this.loadAvailableDevices({ location: locationId });
+        this.loadAvailableDevices({ location: locationIds });
         this.pushUrlState();
     }
 
     onRackChange(e) {
-        const rackId = e.target.value;
+        const rackIds = this.getSelectedValues('rack-select');
 
-        if (!rackId) {
-            const locationId = document.getElementById('location-select').value;
+        if (rackIds.length === 0) {
+            const locationIds = this.getSelectedValues('location-select');
             const siteId = document.getElementById('site-select').value;
-            if (locationId) this.loadAvailableDevices({ location: locationId });
+            if (locationIds.length > 0) this.loadAvailableDevices({ location: locationIds });
             else if (siteId) this.loadAvailableDevices({ site: siteId });
             this.pushUrlState();
             return;
         }
 
-        this.loadAvailableDevices({ rack: rackId });
+        this.loadAvailableDevices({ rack: rackIds });
         this.pushUrlState();
     }
 
@@ -1288,13 +1355,13 @@ class CablePatcher {
         if (port.connected_endpoint) {
             const ep = port.connected_endpoint;
             const badge = document.createElement('span');
-            badge.className = 'badge bg-success';
+            badge.className = 'badge text-bg-success';
             badge.textContent = 'Connected';
             connection.appendChild(badge);
             connection.appendChild(document.createTextNode(` to ${ep.device_name} - ${ep.name}`));
         } else {
             const badge = document.createElement('span');
-            badge.className = 'badge bg-secondary';
+            badge.className = 'badge text-bg-secondary';
             badge.textContent = 'Available';
             connection.appendChild(badge);
         }

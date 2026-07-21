@@ -34,6 +34,14 @@ TERMINATION_MODELS = {
 }
 
 
+def parse_int_list(values):
+    """
+    Convert a list of query param string values to a list of integers.
+    Raises ValueError if any value is not a valid integer.
+    """
+    return [int(v) for v in values]
+
+
 class LocationsViewSet(ViewSet):
     """API endpoint for getting location hierarchy."""
     permission_classes = [IsAuthenticatedOrLoginNotRequired]
@@ -100,21 +108,32 @@ class DevicesViewSet(ViewSet):
     permission_classes = [IsAuthenticatedOrLoginNotRequired]
 
     def list(self, request):
-        """Get devices filtered by location parameters."""
-        rack_id = request.query_params.get('rack')
-        location_id = request.query_params.get('location')
+        """Get devices filtered by location parameters.
+
+        Site is a single value. Rack and location accept multiple values
+        (e.g. `?rack=1&rack=2`). Precedence is exclusive: racks (if any)
+        take priority over locations, which take priority over site.
+        """
+        rack_ids = request.query_params.getlist('rack')
+        location_ids = request.query_params.getlist('location')
         site_id = request.query_params.get('site')
 
         devices = Device.objects.restrict(request.user, 'view')
 
-        if rack_id:
-            devices = devices.filter(rack_id=rack_id)
-        elif location_id:
-            devices = devices.filter(rack__location_id=location_id)
-        elif site_id:
-            devices = devices.filter(site_id=site_id)
-        else:
-            return Response({'error': 'Please specify rack, location, or site'}, status=400)
+        try:
+            if rack_ids:
+                devices = devices.filter(rack_id__in=parse_int_list(rack_ids))
+            elif location_ids:
+                devices = devices.filter(rack__location_id__in=parse_int_list(location_ids))
+            elif site_id:
+                devices = devices.filter(site_id=site_id)
+            else:
+                return Response({'error': 'Please specify rack, location, or site'}, status=400)
+        except ValueError:
+            return Response(
+                {'error': 'Invalid rack or location ID. All IDs must be integers.'},
+                status=400
+            )
 
         devices = devices.select_related('device_type', 'rack').prefetch_related(
             Prefetch('interfaces', queryset=Interface.objects.select_related(
@@ -140,9 +159,14 @@ class CablesViewSet(ViewSet):
     permission_classes = [IsAuthenticatedOrLoginNotRequired]
 
     def list(self, request):
-        """Get cables for devices in a location."""
-        rack_id = request.query_params.get('rack')
-        location_id = request.query_params.get('location')
+        """Get cables for devices in a location.
+
+        Site is a single value. Rack and location accept multiple values
+        (e.g. `?rack=1&rack=2`). Precedence is exclusive: device_ids (if
+        given) take priority, then racks, then locations, then site.
+        """
+        rack_ids = request.query_params.getlist('rack')
+        location_ids = request.query_params.getlist('location')
         site_id = request.query_params.get('site')
         device_ids = request.query_params.getlist('device_ids[]')
 
@@ -161,10 +185,22 @@ class CablesViewSet(ViewSet):
                 .filter(id__in=device_id_ints)
                 .values_list('id', flat=True)
             )
-        elif rack_id:
-            device_ids = list(Device.objects.restrict(request.user, 'view').filter(rack_id=rack_id).values_list('id', flat=True))
-        elif location_id:
-            device_ids = list(Device.objects.restrict(request.user, 'view').filter(rack__location_id=location_id).values_list('id', flat=True))
+        elif rack_ids or location_ids:
+            try:
+                if rack_ids:
+                    qs = Device.objects.restrict(request.user, 'view').filter(
+                        rack_id__in=parse_int_list(rack_ids)
+                    )
+                else:
+                    qs = Device.objects.restrict(request.user, 'view').filter(
+                        rack__location_id__in=parse_int_list(location_ids)
+                    )
+            except ValueError:
+                return Response(
+                    {'error': 'Invalid rack or location ID. All IDs must be integers.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            device_ids = list(qs.values_list('id', flat=True))
         elif site_id:
             device_ids = list(Device.objects.restrict(request.user, 'view').filter(site_id=site_id).values_list('id', flat=True))
         else:

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+* Location and Rack filters now support selecting multiple values at once; Site remains single-select. Selecting racks takes precedence over locations, which takes precedence over site.
+* Fixed low-contrast "Connected"/"Available" badge text in the port hover tooltip by using Bootstrap's `text-bg-*` helper classes instead of `bg-*`
+* `api/devices/` and `api/cables/` now accept repeated `rack` and `location` query params (e.g. `?rack=1&rack=2`) for multi-value filtering
+
 ## 0.3.0 (2026-07-17)
 
 * Front port and rear port rendering in network mode (ports now visible alongside interfaces)
