@@ -23,7 +23,7 @@ We love your input! We want to make contributing to this project as easy and tra
 
 ### Report Bugs
 
-Report bugs at https://github.com//netbox-cable-patcher/issues.
+Report bugs at https://github.com/joeladria/netbox-cable-patcher/issues.
 
 If you are reporting a bug, please include:
 
@@ -49,7 +49,7 @@ articles, and such.
 
 ### Submit Feedback
 
-The best way to send feedback is to file an issue at https://github.com//netbox-cable-patcher/issues.
+The best way to send feedback is to file an issue at https://github.com/joeladria/netbox-cable-patcher/issues.
 
 If you are proposing a feature:
 
@@ -109,8 +109,8 @@ Before you submit a pull request, check that it meets these guidelines:
 2. If the pull request adds functionality, the docs should be updated. Put
    your new functionality into a function with a docstring, and add the
    feature to the list in README.md.
-3. The pull request should work for Python 3.8, 3.9, 3.10 and 3.11. Check
-   https://github.com//netbox-cable-patcher/actions
+3. The pull request should work for Python 3.13. Check
+   https://github.com/joeladria/netbox-cable-patcher/actions
    and make sure that the tests pass for all supported Python versions.
 
 

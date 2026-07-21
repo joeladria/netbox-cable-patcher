@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+* Updated project metadata: authors are now Joel Adria and Moment Factory; minimum supported Python is now 3.13 (was 3.10); minimum supported NetBox version is now 4.5.0 (was 4.0.0) as of plugin v0.4.1.
+* Fixed placeholder/broken GitHub URLs (repo, issues, discussions, documentation) across `README.md`, `CONTRIBUTING.md`, `pyproject.toml`, `mkdocs.yml`, and `.github/ISSUE_TEMPLATE/config.yml` to point to `https://github.com/joeladria/netbox-cable-patcher`.
+* Rewrote the README feature list and compatibility table to reflect the actual functionality shipped through v0.4.1, and updated the credits section.
+
 ## 0.4.1 (2026-07-21)
 
 * Port connect/disconnect state (cable line, port color/icon, connected badge in hover tooltip) now updates instantly after creating or deleting a cable by patching the affected ports' `cable_id`/`connected_endpoint` directly in local state, instead of refetching all devices and cables from the server.

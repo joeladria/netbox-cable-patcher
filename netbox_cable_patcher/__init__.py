@@ -1,6 +1,6 @@
 """Top-level package for NetBox Cable Patcher."""
 
-__author__ = """John Doe"""
+__author__ = "Joel Adria, Moment Factory"
 __email__ = ""
 __version__ = "0.4.1"
 
@@ -13,8 +13,10 @@ class NetBoxCablePatcherConfig(PluginConfig):
     verbose_name = "Cable Patcher"
     description = "Visual patch bay interface for NetBox with interactive cable connections."
     version = __version__
+    author = "Joel Adria, Moment Factory"
+    author_email = ""
     base_url = "cable-patcher"
-    min_version = "4.0.0"
+    min_version = "4.5.0"
 
 
 config = NetBoxCablePatcherConfig

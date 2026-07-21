@@ -9,23 +9,22 @@ build-backend = "setuptools.build_meta"
 name = "netbox-cable-patcher"
 version = "0.4.1"
 authors = [
-    {name = "NetBox Cable Patcher Contributors"},
+    {name = "Joel Adria"},
+    {name = "Moment Factory"},
 ]
 description = "NetBox plugin providing a visual patch bay interface for managing cable connections."
 readme = "README.md"
 license = "Apache-2.0"
 
 classifiers=[
-    'Development Status :: 3 - Alpha',
+    'Development Status :: 4 - Beta',
     'Intended Audience :: Developers',
     'Natural Language :: English',
     "Programming Language :: Python :: 3 :: Only",
-    'Programming Language :: Python :: 3.10',
-    'Programming Language :: Python :: 3.11',
-    'Programming Language :: Python :: 3.12',
+    'Programming Language :: Python :: 3.13',
 ]
 
-requires-python = ">=3.10.0"
+requires-python = ">=3.13.0"
 
 [project.optional-dependencies]
 test = [
@@ -38,13 +37,13 @@ test = [
 ]
 
 [project.urls]
-Documentation = "https://github.com/netbox-community/netbox-cable-patcher/blob/main/README.md"
-Source = "https://github.com/netbox-community/netbox-cable-patcher"
-Tracker = "https://github.com/netbox-community/netbox-cable-patcher/issues"
+Documentation = "https://joeladria.github.io/netbox-cable-patcher/"
+Source = "https://github.com/joeladria/netbox-cable-patcher"
+Tracker = "https://github.com/joeladria/netbox-cable-patcher/issues"
 
 [tool.black]
 line-length = 120
-target_version = ['py39', 'py310', 'py311', 'py312']
+target_version = ['py313']
 
 [tool.setuptools.packages.find]
 include = ["netbox_cable_patcher*"]

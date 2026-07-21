@@ -1,6 +1,6 @@
 sources = netbox_cable_patcher
-NETBOX_VERSION?=4.5.1
-PYTHON_VERSION?=3.12
+NETBOX_VERSION?=4.6.5
+PYTHON_VERSION?=3.13
 
 COMPOSE_FILE=./develop/docker-compose.yml
 BUILD_NAME=netbox-plugins
