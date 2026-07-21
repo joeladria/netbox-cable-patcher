@@ -33,6 +33,11 @@ TERMINATION_MODELS = {
     'ConsoleServerPort': ConsoleServerPort,
 }
 
+# Message recorded in NetBox's changelog (ObjectChange) for any Cable created
+# or deleted through the patcher UI/API, so changes made by this plugin are
+# clearly distinguishable from changes made elsewhere in NetBox.
+CHANGELOG_MESSAGE = 'Modified by Cable Patcher Plugin'
+
 
 def parse_int_list(values):
     """
@@ -279,37 +284,31 @@ class CablesViewSet(ViewSet):
 
         try:
             with transaction.atomic():
-                # Create the cable
+                # Build the cable with its A/B terminations assigned via
+                # NetBox's own model API. Assigning to a_terminations/
+                # b_terminations (rather than creating CableTermination rows
+                # directly) is required for NetBox to recognize the
+                # terminations as "modified" -- see Cable.save(), which only
+                # creates CableTerminations and fires the trace_paths signal
+                # (which builds the CablePath used for cable tracing) when
+                # this flag is set. Creating CableTermination rows directly
+                # bypasses this entirely, silently skipping path tracing.
                 cable = Cable(
                     type=data.get('type', ''),
                     status=data.get('status', LinkStatusChoices.STATUS_CONNECTED),
                     color=data.get('color', ''),
                     label=data.get('label', ''),
-                )
-                cable.save()
-
-                # Create terminations
-                a_ct = ContentType.objects.get_for_model(a_model)
-                b_ct = ContentType.objects.get_for_model(b_model)
-
-                CableTermination.objects.create(
-                    cable=cable,
-                    cable_end='A',
-                    termination_type=a_ct,
-                    termination_id=a_term.id
-                )
-                CableTermination.objects.create(
-                    cable=cable,
-                    cable_end='B',
-                    termination_type=b_ct,
-                    termination_id=b_term.id
+                    a_terminations=[a_term],
+                    b_terminations=[b_term],
+                    changelog_message=CHANGELOG_MESSAGE,
                 )
 
-                # Refresh so the cable instance knows about its terminations,
-                # then run NetBox's own model-level validation (compatibility
-                # checks, same-device restrictions, etc.).
-                cable.refresh_from_db()
+                # Validate before persisting anything (compatibility checks,
+                # duplicate/occupied termination checks, same-device
+                # restrictions, etc.) rather than saving first and validating
+                # after the fact.
                 cable.full_clean()
+                cable.save()
 
                 # Verify object-level permission constraints (e.g. "user may
                 # only add cables in site X").  The model-level has_perm()
@@ -354,6 +353,9 @@ class CablesViewSet(ViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
 
+        # Record in the changelog that this deletion was performed by the
+        # patcher, rather than through NetBox's own Cable UI/API.
+        cable._changelog_message = CHANGELOG_MESSAGE
         cable.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 

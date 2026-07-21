@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.4.0 (2026-07-21)
+
+* Fixed cable creation not generating a cable trace (`CablePath`). Cable creation now assigns terminations via NetBox's `Cable.a_terminations`/`b_terminations` model API and calls `full_clean()` before `save()`, instead of creating `CableTermination` rows directly — matching NetBox's own object-creation pattern and ensuring NetBox's internal `trace_paths` signal fires so cable paths are built correctly.
+* Cables created or deleted through the patcher now record "Modified by Cable Patcher Plugin" as the changelog message, so these changes are clearly distinguishable from changes made elsewhere in NetBox.
 * Location and Rack filters now support selecting multiple values at once; Site remains single-select. Selecting racks takes precedence over locations, which takes precedence over site.
 * Fixed low-contrast "Connected"/"Available" badge text in the port hover tooltip by using Bootstrap's `text-bg-*` helper classes instead of `bg-*`
 * `api/devices/` and `api/cables/` now accept repeated `rack` and `location` query params (e.g. `?rack=1&rack=2`) for multi-value filtering

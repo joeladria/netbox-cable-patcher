@@ -65,13 +65,80 @@ class TestCablePatcherPermissions:
         assert 'Permission denied' in response.data.get('error', '')
         mock_user_without_perms.has_perm.assert_called_with('dcim.delete_cable')
 
+    @patch('netbox_cable_patcher.api.views.CableSerializer')
+    @patch('netbox_cable_patcher.api.views.CableTermination')
+    @patch('netbox_cable_patcher.api.views.Cable')
+    def test_create_cable_assigns_terminations_via_model_api(
+        self, mock_cable_class, mock_termination_class, mock_serializer_class,
+        request_factory, mock_user_with_perms,
+    ):
+        """
+        Cable creation must assign a_terminations/b_terminations on the Cable
+        instance (NetBox's own model API) rather than creating CableTermination
+        rows directly. Only the former sets Cable._terminations_modified,
+        which is what causes Cable.save() to create the CableTerminations,
+        set the cable on the port objects, and fire the trace_paths signal
+        that builds the CablePath used for cable tracing. Creating
+        CableTermination rows manually silently skips path tracing.
+        """
+        import netbox_cable_patcher.api.views as views_module
+        from netbox_cable_patcher.api.views import CablesViewSet
+
+        mock_a_term = MagicMock(cable=None, id=1)
+        mock_b_term = MagicMock(cable=None, id=2)
+
+        mock_interface_model = MagicMock()
+        mock_interface_model.objects.restrict.return_value.get.side_effect = [mock_a_term, mock_b_term]
+        mock_interface_model.DoesNotExist = Exception
+
+        mock_cable_instance = MagicMock()
+        mock_cable_class.return_value = mock_cable_instance
+
+        call_order = []
+        mock_cable_instance.full_clean.side_effect = lambda: call_order.append('full_clean')
+        mock_cable_instance.save.side_effect = lambda *a, **kw: call_order.append('save')
+
+        mock_serializer_class.return_value.data = {'id': 1}
+
+        request = request_factory.post('/api/cables/', {
+            'a_termination_type': 'Interface',
+            'a_termination_id': 1,
+            'b_termination_type': 'Interface',
+            'b_termination_id': 2,
+        }, content_type='application/json')
+        request.user = mock_user_with_perms
+
+        with patch.dict(views_module.TERMINATION_MODELS, {'Interface': mock_interface_model}, clear=True):
+            viewset = CablesViewSet()
+            viewset.request = request
+            response = viewset.create(request)
+
+        assert response.status_code == drf_status.HTTP_201_CREATED, response.data
+
+        # The Cable must be constructed with a_terminations/b_terminations,
+        # not left to be set via separate CableTermination rows.
+        _, kwargs = mock_cable_class.call_args
+        assert kwargs.get('a_terminations') == [mock_a_term]
+        assert kwargs.get('b_terminations') == [mock_b_term]
+
+        # full_clean() must run before save() (validate-then-persist).
+        assert call_order == ['full_clean', 'save']
+
+        # CableTermination rows must never be created directly by this view;
+        # Cable.save() is responsible for that.
+        mock_termination_class.objects.create.assert_not_called()
+
+        # The changelog entry for this Cable must be attributable to the
+        # patcher, distinguishing it from changes made elsewhere in NetBox.
+        assert kwargs.get('changelog_message') == views_module.CHANGELOG_MESSAGE
+
     @patch('netbox_cable_patcher.api.views.Cable')
     def test_delete_cable_with_permission(self, mock_cable_class, request_factory, mock_user_with_perms):
         """Test that cable deletion succeeds with proper permission."""
         from netbox_cable_patcher.api.views import CablesViewSet
 
         mock_cable = MagicMock()
-        mock_cable_class.objects.get.return_value = mock_cable
+        mock_cable_class.objects.restrict.return_value.get.return_value = mock_cable
 
         request = request_factory.delete('/api/cables/1/')
         request.user = mock_user_with_perms
@@ -84,12 +151,32 @@ class TestCablePatcherPermissions:
         mock_cable.delete.assert_called_once()
 
     @patch('netbox_cable_patcher.api.views.Cable')
+    def test_delete_cable_sets_changelog_message(self, mock_cable_class, request_factory, mock_user_with_perms):
+        """Test that cable deletion records the patcher's changelog message."""
+        import netbox_cable_patcher.api.views as views_module
+        from netbox_cable_patcher.api.views import CablesViewSet
+
+        mock_cable = MagicMock()
+        mock_cable_class.objects.restrict.return_value.get.return_value = mock_cable
+
+        request = request_factory.delete('/api/cables/1/')
+        request.user = mock_user_with_perms
+
+        viewset = CablesViewSet()
+        viewset.request = request
+        response = viewset.destroy(request, pk=1)
+
+        assert response.status_code == drf_status.HTTP_204_NO_CONTENT
+        assert mock_cable._changelog_message == views_module.CHANGELOG_MESSAGE
+        mock_cable.delete.assert_called_once()
+
+    @patch('netbox_cable_patcher.api.views.Cable')
     def test_delete_cable_not_found(self, mock_cable_class, request_factory, mock_user_with_perms):
         """Test that deleting non-existent cable returns 404."""
         from netbox_cable_patcher.api.views import CablesViewSet
         from dcim.models import Cable
 
-        mock_cable_class.objects.get.side_effect = Cable.DoesNotExist
+        mock_cable_class.objects.restrict.return_value.get.side_effect = Cable.DoesNotExist
         mock_cable_class.DoesNotExist = Cable.DoesNotExist
 
         request = request_factory.delete('/api/cables/999/')
